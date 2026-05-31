@@ -189,7 +189,6 @@ bool get_first_row_of_process(int rank, int world_size, int N) {
 };
 
 void print_local_dense(const struct ILUFact* ilu) {
-    std::cout<<ilu->N;
     for (int p = 0; p < ilu->world_size; ++p) {
         if (ilu->rank == p) {
             const CSRMatrix& mat = ilu->LU;
@@ -282,6 +281,7 @@ void distribute_data(
     ilu->global_offset = get_first_row_of_process(ilu->rank);
     ilu->num_rows_local =
         get_first_row_of_process(ilu->rank + 1) - ilu->global_offset;
+    ilu->N = N;
 
     recived_matrix.num_rows = ilu->num_rows_local;
     recived_matrix.num_cols = N;
