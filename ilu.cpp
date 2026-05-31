@@ -796,6 +796,7 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
     }
 
     utils::print_local_dense(ilu);
+    std::cout<<"co?";
 
     return ilu;
 }
