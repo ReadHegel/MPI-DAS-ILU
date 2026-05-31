@@ -281,7 +281,7 @@ void distribute_data(
     ilu->global_offset = get_first_row_of_process(ilu->rank);
     ilu->num_rows_local =
         get_first_row_of_process(ilu->rank + 1) - ilu->global_offset;
-    std::cout<<N<<std::endl;
+    ilu->N = N;
 
     recived_matrix.num_rows = ilu->num_rows_local;
     recived_matrix.num_cols = N;
