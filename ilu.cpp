@@ -795,7 +795,7 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
         }
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
+    utils::print_local_dense(ilu);
 
     return ilu;
 }
