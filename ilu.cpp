@@ -189,25 +189,30 @@ bool get_first_row_of_process(int rank, int world_size, int N) {
 };
 
 void print_local_dense(const struct ILUFact* ilu) {
-    const CSRMatrix& mat = ilu->LU;
-    for (int i = 0; i < mat.num_rows; ++i) {
-        int current_col = 0;
-        for (int idx = mat.row_ptr[i]; idx < mat.row_ptr[i + 1]; ++idx) {
-            int target_col = mat.col_idx[idx];
-            while (current_col < target_col) {
-                std::cout << std::setw(8) << "*";
-                current_col++;
+    for (int p = 0; p < ilu->world_size; ++p) {
+        if (ilu->rank == p) {
+            const CSRMatrix& mat = ilu->LU;
+            for (int i = 0; i < mat.num_rows; ++i) {
+                int current_col = 0;
+                for (int idx = mat.row_ptr[i]; idx < mat.row_ptr[i + 1]; ++idx) {
+                    int target_col = mat.col_idx[idx];
+                    while (current_col < target_col) {
+                        std::cout << std::setw(8) << "*";
+                        current_col++;
+                    }
+                    std::cout << std::setw(8) << std::fixed << std::setprecision(3) << mat.val[idx];
+                    current_col++;
+                }
+                while (current_col < ilu->N) {
+                    std::cout << std::setw(8) << "*";
+                    current_col++;
+                }
+                std::cout << "\n";
             }
-            std::cout << std::setw(8) << std::fixed << std::setprecision(3) << mat.val[idx];
-            current_col++;
+            std::cout << std::flush;
         }
-        while (current_col < ilu->N) {
-            std::cout << std::setw(8) << "*";
-            current_col++;
-        }
-        std::cout << "\n";
+        MPI_Barrier(MPI_COMM_WORLD);
     }
-    std::cout << std::flush;
 }
 
 namespace permutation {
@@ -796,7 +801,6 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
     }
 
     utils::print_local_dense(ilu);
-    std::cout<<"co?";
 
     return ilu;
 }
