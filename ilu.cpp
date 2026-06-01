@@ -534,7 +534,7 @@ void share_dependencies(struct ILUFact *ilu) {
             MPI_Request req;
             MPI_Isend(
                 rows_to_recv[p].data(),
-                requests_count_to_send[p],
+                requests_count_to_recv[p],
                 MPI_INT,
                 p,
                 ilu->N + 1,
@@ -552,7 +552,7 @@ void share_dependencies(struct ILUFact *ilu) {
             MPI_Request req;
             MPI_Irecv(
                 rows_to_send[p].data(),
-                requests_count_to_recv[p],
+                requests_count_to_send[p],
                 MPI_INT,
                 p,
                 ilu->N + 1,
