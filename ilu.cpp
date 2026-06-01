@@ -1002,7 +1002,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
             solve_type == SolveType::L ? ilu->lower_rank_topo : ilu->higher_rank_topo
         );
  
-        Ey_ext = std::vector<double>(ilu->num_rows_local, 0);
+        std::vector<double> Ey_ext(ilu->num_rows_local, 0);
         for (int loc_row = 0; loc_row < ilu->num_rows_local; ++loc_row) {
             for (int idx = ilu->LU.row_ptr[loc_row]; idx < ilu->LU.row_ptr[loc_row + 1]; ++idx) {
                 int global_col = ilu->LU.col_idx[idx];
@@ -1035,7 +1035,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
 
         converged = true;
         for (int i = 0; i < y_new.size(); ++i) {
-            if (abs(y_new[i] - y[i]) > EPS) {
+            if (std::abs(y_new[i] - y[i]) > EPS) {
                 converged = false;
             }
         }
