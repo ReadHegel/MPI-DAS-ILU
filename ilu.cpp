@@ -902,12 +902,9 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
     MPI_Comm_size(MPI_COMM_WORLD, &ilu->world_size);
 
     distribute_data(N, nnz, row, col, val, ilu);
-    utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
-    utils::print_local_dense(ilu);
     share_dependencies(ilu);  // TODO uwspółbierznić
     ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
-    utils::print_local_dense(ilu);
 
     std::vector<int> interior_nodes(ilu->num_interior);
     std::iota(interior_nodes.begin(), interior_nodes.end(), 0);
@@ -1001,7 +998,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
 
         if (solve_type == SolveType::U) {
             // print topo
-            usleep(1000000);
+            usleep(100000);
             for (const auto &[global_row, src_rank] : ilu->higher_rank_topo.glbrow_to_rank_to_recv) {
                 std::cout<<"global_row: "<<global_row<<" src_rank: "<<src_rank<<std::endl;
             }
