@@ -261,7 +261,7 @@ void ILU(
         for (int k = LU.row_ptr[i]; k < LU.row_ptr[i + 1]; ++k) {
             int row_to_subtract_loc = LU.col_idx[k] - global_offset;
 
-            if (row_to_subtract_loc >= global_offset + i) {
+            if (LU.col_idx[k] >= global_offset + i) {
                 break;
             }
 
