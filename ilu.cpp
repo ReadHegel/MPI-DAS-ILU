@@ -554,7 +554,7 @@ void share_dependencies(struct ILUFact *ilu) {
     // Receive information about which rows do other ranks need from me
     for (int p = 0; p < ilu->world_size; ++p) {
         if (requests_count_to_send[p] > 0) {
-            rows_to_send[p].resize(requests_count_to_recv[p]);
+            rows_to_send[p].resize(requests_count_to_send[p]);
             MPI_Request req;
             MPI_Irecv(
                 rows_to_send[p].data(),
