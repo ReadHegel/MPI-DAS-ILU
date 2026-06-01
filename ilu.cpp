@@ -270,9 +270,7 @@ void ILU(
                 LU.val.data() + diag_kk_idx + 1,
                 LU.col_idx.data() + diag_kk_idx + 1,
                 LU.row_ptr[row_to_subtract_loc + 1] -
-                    LU.row_ptr[row_to_subtract_loc] -
-
-                    1
+                    LU.row_ptr[row_to_subtract_loc] - 1
             );
         }
     }
@@ -575,6 +573,12 @@ void share_dependencies(struct ILUFact *ilu) {
 
     MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
 
+    for (int p = 0; p < ilu->world_size; ++p) {
+        for (int global_row : rows_to_send[p]) {
+            ilu->send_to_ranks[global_row].push_back(p);
+        }
+    }
+
     std::vector<std::vector<int>> nnz_to_send(ilu->world_size);
     std::vector<std::vector<int>> nnz_to_recv(ilu->world_size);
     requests.clear();
@@ -745,6 +749,7 @@ std::vector<int> incorporate_received_row(
                     ilu, local_row_sep, first_col_in_separator_idx
                 )) {
                 ready_rows_loc.push_back(local_row_sep);
+                ilu->is_separator_ready[local_row_sep - ilu->num_interior] = true;
             }
         }
     }
