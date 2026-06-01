@@ -411,7 +411,7 @@ void permute_rows(
 
     for (int row_local = 0; row_local < LU.num_rows; ++row_local) {
         int original_row = inv_perm[row_local];
-        const int global_row = global_offset + original_row;
+        const int global_row = global_offset + row_local;
         int row_start = LU.row_ptr[original_row];
         int row_end = LU.row_ptr[original_row + 1];
 
