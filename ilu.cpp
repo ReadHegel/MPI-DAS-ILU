@@ -404,24 +404,42 @@ void permute_rows(
     std::vector<double> perm_val;
 
     perm_row_ptr.reserve(LU.num_rows + 1);
-    perm_col_idx.reserve(LU.nnz);
-    perm_val.reserve(LU.nnz);
+    perm_col_idx.reserve(LU.nnz + LU.num_rows);
+    perm_val.reserve(LU.nnz + LU.num_rows);
 
     perm_row_ptr.push_back(0);
 
     for (int row_local = 0; row_local < LU.num_rows; ++row_local) {
         int original_row = inv_perm[row_local];
+        const int global_row = global_offset + original_row;
         int row_start = LU.row_ptr[original_row];
         int row_end = LU.row_ptr[original_row + 1];
 
-        perm_val.insert(perm_val.end(), LU.val.begin() + row_start, LU.val.begin() + row_end);
-        perm_col_idx.insert(perm_col_idx.end(), LU.col_idx.begin() + row_start, LU.col_idx.begin() + row_end);
-        perm_row_ptr.push_back(perm_col_idx.size());
+        bool has_diagonal = false;
+        for (int idx = row_start; idx < row_end; ++idx) {
+            if (!has_diagonal && LU.col_idx[idx] > global_row) {
+                perm_col_idx.push_back(global_row);
+                perm_val.push_back(0.0);
+                has_diagonal = true;
+            }
+            if (LU.col_idx[idx] == global_row) {
+                has_diagonal = true;
+            }
+            perm_col_idx.push_back(LU.col_idx[idx]);
+            perm_val.push_back(LU.val[idx]);
+        }
+        if (!has_diagonal) {
+            perm_col_idx.push_back(global_row);
+            perm_val.push_back(0.0);
+        }
+
+        perm_row_ptr.push_back(static_cast<int>(perm_col_idx.size()));
     }
 
     LU.row_ptr = std::move(perm_row_ptr);
     LU.col_idx = std::move(perm_col_idx);
     LU.val = std::move(perm_val);
+    LU.nnz = static_cast<int>(LU.col_idx.size());
 }
 
 void interior_separator_partition(struct ILUFact *ilu) {
