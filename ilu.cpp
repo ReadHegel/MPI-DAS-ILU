@@ -1000,9 +1000,16 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
         );
 
         if (solve_type == SolveType::U) {
-            std::cout<<"external_vec: "<<external_vec.size()<<std::endl;
-            for (const auto &[global_row, val] : external_vec) {
-                std::cout<<"global_row: "<<global_row<<" val: "<<val<<std::endl;
+            // print topo
+            usleep(1000000);
+            for (const auto &[global_row, src_rank] : ilu->higher_rank_topo.glbrow_to_rank_to_recv) {
+                std::cout<<"global_row: "<<global_row<<" src_rank: "<<src_rank<<std::endl;
+            }
+            for (const auto &[global_row, src_rank] : ilu->higher_rank_topo.glbrow_to_rank_to_recv) {
+                std::cout<<"global_row: "<<global_row<<" src_rank: "<<src_rank<<std::endl;
+            }
+            for (const auto &[global_row, nnz] : ilu->higher_rank_topo.glbrow_row_nnz_to_recv) {
+                std::cout<<"global_row: "<<global_row<<" nnz: "<<nnz<<std::endl;
             }
         }
  
