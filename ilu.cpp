@@ -419,10 +419,6 @@ void permute_rows(
         int row_start = LU.row_ptr[original_row];
         int row_end = LU.row_ptr[original_row + 1];
 
-        if (row_local >= ilu->num_interior) {
-            ilu->first_col_in_separator_idx.push_back(row_start);
-        }
-
         bool has_diagonal = false;
         for (int idx = row_start; idx < row_end; ++idx) {
             if (!has_diagonal && LU.col_idx[idx] > global_row) {
@@ -487,6 +483,10 @@ void interior_separator_partition(struct ILUFact *ilu) {
     ilu->perm = utils::permutation::inverse_permutation(ilu->inv_perm);
 
     permute_rows(LU, ilu->global_offset, ilu->perm, ilu->inv_perm);
+
+    for (int sep_row = ilu->num_interior; sep_row < ilu->num_rows_local; ++sep_row) {
+        ilu->first_col_in_separator_idx.push_back(LU.row_ptr[sep_row]);
+    }
 }
 
 void share_dependencies(struct ILUFact *ilu) {
