@@ -161,7 +161,7 @@ int main(int argc, char* argv[])
         v2[i] = i;
     }
 
-    // test_vector(ilu, N, v1);
+    test_vector(ilu, N, v1);
     test_vector(ilu, N, v2);
 
     ILU_free(ilu);

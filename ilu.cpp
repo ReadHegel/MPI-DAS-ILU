@@ -809,10 +809,6 @@ std::vector<int> incorporate_received_row(
          ++local_row_sep) {
         auto first_col_in_separator_idx =
             ilu->first_col_in_separator_idx[local_row_sep - ilu->num_interior];
-
-        std::cout<<"global_row: "<<global_row<<" first_col_in_separator_idx: "<<first_col_in_separator_idx<<std::endl;
-
-        std::cout<<"ilu->LU.col_idx[first_col_in_separator_idx]: "<<ilu->LU.col_idx[first_col_in_separator_idx]<<std::endl;
         if (ilu->LU.col_idx[first_col_in_separator_idx] == global_row) {
             if (ILU_row_with_externals(
                     ilu, local_row_sep, first_col_in_separator_idx
@@ -1022,8 +1018,6 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
                 if (solve_type == SolveType::L) {
                     if (global_col < ilu->global_offset) {
                         Ey_ext[loc_row] += external_vec[global_col] * ilu->LU.val[idx];
-                        std::cout<<"global_col: "<<global_col<<" ilu->LU.val[idx]: "<<ilu->LU.val[idx]<<" external_vec[global_col]: "<<external_vec[global_col]<<std::endl;
-
                     }
                 }
                 else {
