@@ -1011,7 +1011,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
                 if (solve_type == SolveType::L) {
                     if (global_col < ilu->global_offset) {
                         Ey_ext[loc_row] += external_vec[global_col] * ilu->LU.val[idx];
-                        cout<<"Ey_ext["<<loc_row<<"] += "<<external_vec[global_col]<<" * "<<ilu->LU.val[idx]<<endl;
+                        std::cout<<"Ey_ext["<<loc_row<<"] += "<<external_vec[global_col]<<" * "<<ilu->LU.val[idx]<<endl;
                     }
                 }
                 else {
