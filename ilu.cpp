@@ -188,20 +188,26 @@ bool get_first_row_of_process(int rank, int world_size, int N) {
     return rank * N / world_size;
 };
 
-void print_local_dense(const struct ILUFact* ilu) {
+void print_local_dense(const struct ILUFact *ilu) {
     for (int p = 0; p < ilu->world_size; ++p) {
         if (ilu->rank == p) {
-            std::cout<<ilu->N<<std::endl;
-            const CSRMatrix& mat = ilu->LU;
+            const CSRMatrix &mat = ilu->LU;
+            std::cout << "[rank " << ilu->rank << "/" << ilu->world_size
+
+                      << "] local rows=" << ilu->LU.num_rows
+                      << " offset=" << ilu->global_offset << "\n";
+            std::cout << ilu->N << std::endl;
             for (int i = 0; i < mat.num_rows; ++i) {
                 int current_col = 0;
-                for (int idx = mat.row_ptr[i]; idx < mat.row_ptr[i + 1]; ++idx) {
+                for (int idx = mat.row_ptr[i]; idx < mat.row_ptr[i + 1];
+                     ++idx) {
                     int target_col = mat.col_idx[idx];
                     while (current_col < target_col) {
                         std::cout << std::setw(8) << "*";
                         current_col++;
                     }
-                    std::cout << std::setw(8) << std::fixed << std::setprecision(3) << mat.val[idx];
+                    std::cout << std::setw(8) << std::fixed
+                              << std::setprecision(3) << mat.val[idx];
                     current_col++;
                 }
                 while (current_col < ilu->N) {
@@ -812,14 +818,14 @@ auto dist_async_solve_L(struct ILUFact *ilu, const std::vector<double> &b) {
 
     // int residue;
     // do {
-    //     // Recieve rows 
+    //     // Recieve rows
     //     // Send rows
     //
     // while ()
 
-
     return y;
 }
+
 void ILU_solve(struct ILUFact *ilu, double *b, double *res) {
     // 1. Zastosowanie permutacji do wektora b
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
