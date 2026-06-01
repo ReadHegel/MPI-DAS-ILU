@@ -896,9 +896,6 @@ auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b) {
 // ================================================
 
 struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
-    // 3. Podział wierszy na "interior" i "separator"
-    // 4. Renumeracja
-    // 5. Lokalna faktoryzacja
     struct ILUFact *ilu = new ILUFact();
 
     MPI_Comm_rank(MPI_COMM_WORLD, &ilu->rank);
@@ -1054,7 +1051,7 @@ void ILU_solve(struct ILUFact *ilu, double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     b_vec = utils::permutation::apply_permutation(b_vec, ilu->perm);
     b_vec = dist_async_solve(ilu, b_vec, SolveType::L);
-    b_vec = dist_async_solve(ilu, b_vec, SolveType::U);
+    //b_vec = dist_async_solve(ilu, b_vec, SolveType::U);
 
     memcpy(res, b_vec.data(), ilu->num_rows_local * sizeof(double));
 }
