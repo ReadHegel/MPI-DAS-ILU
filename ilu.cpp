@@ -816,6 +816,8 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
         );
         ilu->count_active_requests--;
 
+        std::cout<<"received row: "<<ilu->request_to_row_idx[indx]<<std::endl;
+
         auto new_ready_rows_loc = incorporate_received_row(ilu, indx);
         if (!new_ready_rows_loc.empty()) {
             broadcast_new_rows(ilu, new_ready_rows_loc);
