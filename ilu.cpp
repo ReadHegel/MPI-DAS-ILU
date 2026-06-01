@@ -873,7 +873,7 @@ auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b) {
     for (int i = LU.num_rows - 1; i >= 0; --i) {
         double cum = 0;
         int diag_idx = -1;
-        for (int j = LU.row_ptr[i]; j < LU.row_ptr[i + 1]; ++j) {
+        for (int j = LU.row_ptr[i + 1] - 1; j >= LU.row_ptr[i]; --j) {
             int col = LU.col_idx[j];
             if (col > i) {
                 cum += LU.val[j] * x[col];
