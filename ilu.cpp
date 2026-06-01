@@ -223,15 +223,15 @@ void print_local_dense(const struct ILUFact *ilu) {
                      ++idx) {
                     int target_col = mat.col_idx[idx];
                     while (current_col < target_col) {
-                        std::cout << std::setw(8) << "*";
+                        std::cout << std::setw(4) << "*";
                         current_col++;
                     }
-                    std::cout << std::setw(8) << std::fixed
-                              << std::setprecision(3) << mat.val[idx];
+                    std::cout << std::setw(4) << std::fixed
+                              << std::setprecision(1) << mat.val[idx];
                     current_col++;
                 }
                 while (current_col < ilu->N) {
-                    std::cout << std::setw(8) << "*";
+                    std::cout << std::setw(4) << "*";
                     current_col++;
                 }
                 std::cout << "\n";
@@ -902,6 +902,7 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
     MPI_Comm_size(MPI_COMM_WORLD, &ilu->world_size);
 
     distribute_data(N, nnz, row, col, val, ilu);
+    utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
     share_dependencies(ilu);  // TODO uwspółbierznić
     ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
