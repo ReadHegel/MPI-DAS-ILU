@@ -193,6 +193,7 @@ int get_owner_rank(int global_row, int world_size, int N) {
 }
 
 void print_local_dense(const struct ILUFact *ilu) {
+    MPI_Barrier(MPI_COMM_WORLD);
     for (int p = 0; p < ilu->world_size; ++p) {
         if (ilu->rank == p) {
             const CSRMatrix &mat = ilu->LU;
@@ -200,7 +201,6 @@ void print_local_dense(const struct ILUFact *ilu) {
 
                       << "] local rows=" << ilu->LU.num_rows
                       << " offset=" << ilu->global_offset << "\n";
-            std::cout << ilu->N << std::endl;
             for (int i = 0; i < mat.num_rows; ++i) {
                 int current_col = 0;
                 for (int idx = mat.row_ptr[i]; idx < mat.row_ptr[i + 1];
@@ -224,6 +224,7 @@ void print_local_dense(const struct ILUFact *ilu) {
         }
         MPI_Barrier(MPI_COMM_WORLD);
     }
+    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 namespace permutation {
