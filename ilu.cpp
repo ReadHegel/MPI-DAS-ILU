@@ -851,14 +851,14 @@ void broadcast_new_rows(
     }
 }
 
-auto solve_L(struct CSRMatrix &LU, const std::vector<double> &b) {
+auto solve_L(struct CSRMatrix &LU, const std::vector<double> &b, int global_offset) {
     std::vector<double> x(LU.num_rows, 0);
     for (int i = 0; i < LU.num_rows; ++i) {
         double cum = 0;
         for (int j = LU.row_ptr[i]; j < LU.row_ptr[i + 1]; ++j) {
-            int col = LU.col_idx[j];
-            if (col < i) {
-                cum += LU.val[j] * x[col];
+            int col_local = LU.col_idx[j] - global_offset;
+            if (col_local < i) {
+                cum += LU.val[j] * x[col_local];
             } else { 
                 break;
             }
@@ -868,17 +868,17 @@ auto solve_L(struct CSRMatrix &LU, const std::vector<double> &b) {
     return x;
 }
 
-auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b) {
+auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b, int global_offset) {
     std::vector<double> x(LU.num_rows, 0);
     for (int i = LU.num_rows - 1; i >= 0; --i) {
         double cum = 0;
         int diag_idx = -1;
         for (int j = LU.row_ptr[i + 1] - 1; j >= LU.row_ptr[i]; --j) {
-            int col = LU.col_idx[j];
-            if (col > i) {
-                cum += LU.val[j] * x[col];
+            int col_local = LU.col_idx[j] - global_offset;
+            if (col_local > i) {
+                cum += LU.val[j] * x[col_local];
             } 
-            else if (col == i) {
+            else if (col_local == i) {
                 diag_idx = j;
                 break;
             } else {
@@ -981,10 +981,10 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
     std::vector<double> y;
     switch (solve_type) {
         case SolveType::L:
-            y = solve_L(ilu->LU, b);
+            y = solve_L(ilu->LU, b, ilu->global_offset);
             break;
         case SolveType::U:
-            y = solve_U(ilu->LU, b);
+            y = solve_U(ilu->LU, b, ilu->global_offset);
             break;
     }
 
