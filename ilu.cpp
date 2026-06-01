@@ -186,7 +186,11 @@ bool is_zero(double val) {
 
 int get_first_row_of_process(int rank, int world_size, int N) {
     return rank * N / world_size;
-};
+}
+
+int get_owner_rank(int global_row, int world_size, int N) {
+    return (global_row * world_size + world_size - 1) / N;
+}
 
 void print_local_dense(const struct ILUFact *ilu) {
     for (int p = 0; p < ilu->world_size; ++p) {
@@ -250,7 +254,7 @@ void ILU(
 ) {
     for (int i = 1; i < num_rows_from_U_to_factorize; ++i) {
         for (int k = LU.row_ptr[i]; k < LU.row_ptr[i + 1]; ++k) {
-            int row_to_subtract_loc = LU.col_idx[k];
+            int row_to_subtract_loc = LU.col_idx[k] - global_offset;
 
             if (row_to_subtract_loc >= global_offset + i) {
                 break;
@@ -483,6 +487,7 @@ void interior_separator_partition(struct ILUFact *ilu) {
     interor_rows.insert(
         interor_rows.end(), separator_rows.begin(), separator_rows.end()
     );
+    ilu->is_separator_ready.resize(ilu->num_separator, false);
 
     ilu->inv_perm = std::move(interor_rows);
     ilu->perm = utils::permutation::inverse_permutation(ilu->inv_perm);
@@ -502,8 +507,7 @@ void share_dependencies(struct ILUFact *ilu) {
             int global_col = ilu->LU.col_idx[idx];
 
             if (global_col < ilu->global_offset) {
-                // TODO verify:
-                int owner_rank = global_col / (ilu->N / ilu->world_size);
+                int owner_rank = utils::get_owner_rank(global_col, ilu->world_size, ilu->N);
                 needed_rows_from_rank[owner_rank].insert(global_col);
             }
         }
@@ -653,9 +657,14 @@ bool ILU_row_with_externals(struct ILUFact *ilu, int row_local, int first_idx) {
         int col = LU.col_idx[idx];
         double val = LU.val[idx];
 
-        if (utils::is_zero(val) || col >= row_local + ilu->global_offset) {
+        if (col >= row_local + ilu->global_offset) {
+            break; // return true;
+        }
+
+        if (utils::is_zero(val)) {
             continue;
         }
+
 
         int a_kk_idx = -1;
         std::vector<int> other_cols;
@@ -712,6 +721,7 @@ bool ILU_row_with_externals(struct ILUFact *ilu, int row_local, int first_idx) {
             other_vals.data() + a_kk_idx + 1,
             other_cols.data() + a_kk_idx + 1,
             other_vals.size() - a_kk_idx - 1
+
         );
     }
     return true;
@@ -727,13 +737,12 @@ std::vector<int> incorporate_received_row(
     for (int local_row_sep = ilu->num_interior;
          local_row_sep < ilu->num_rows_local;
          ++local_row_sep) {
-        if (ilu->first_col_in_separator_idx
-                [local_row_sep - ilu->num_interior] == global_row) {
+        auto first_col_in_separator_idx =
+            ilu->first_col_in_separator_idx[local_row_sep - ilu->num_interior];
+
+        if (ilu->LU.col_idx[first_col_in_separator_idx] == global_row) {
             if (ILU_row_with_externals(
-                    ilu,
-                    local_row_sep,
-                    ilu->first_col_in_separator_idx
-                        [local_row_sep - ilu->num_interior]
+                    ilu, local_row_sep, first_col_in_separator_idx
                 )) {
                 ready_rows_loc.push_back(local_row_sep);
             }
@@ -746,8 +755,8 @@ std::vector<int> incorporate_received_row(
 void broadcast_new_rows(
     struct ILUFact *ilu, const std::vector<int> &new_ready_rows_loc
 ) {
-    for (auto &row : new_ready_rows_loc) {
-        int local_row = row - ilu->global_offset;
+    for (auto &local_row : new_ready_rows_loc) {
+        int global_row = local_row + ilu->global_offset;
         int nnz = ilu->LU.nnz_in_local_row(local_row);
         std::vector<RowElem> data_to_send(nnz);
 
@@ -759,13 +768,13 @@ void broadcast_new_rows(
             };
         }
 
-        for (auto &rank : ilu->send_to_ranks[row]) {
+        for (auto &rank : ilu->send_to_ranks[global_row]) {
             MPI_Send(
                 data_to_send.data(),
                 nnz * sizeof(RowElem),
                 MPI_BYTE,
                 rank,
-                row,
+                global_row,
                 MPI_COMM_WORLD
             );
         }
@@ -791,6 +800,10 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
     interior_separator_partition(ilu);
     share_dependencies(ilu);  // TODO uwspółbierznić
     ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
+
+    std::vector<int> interior_nodes(ilu->num_interior);
+    std::iota(interior_nodes.begin(), interior_nodes.end(), 0);
+    broadcast_new_rows(ilu, interior_nodes);
 
     while (ilu->count_active_requests > 0) {
         int indx;
