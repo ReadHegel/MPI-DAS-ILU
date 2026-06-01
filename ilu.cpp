@@ -503,7 +503,7 @@ void interior_separator_partition(struct ILUFact *ilu) {
 auto calculate_needed_rows_from_other_ranks(struct ILUFact *ilu) {
     std::vector<std::set<int>> needed_rows_from_rank(ilu->world_size);
 
-    for (int row_local = ilu->num_interior; row_local < ilu->num_rows_local;
+    for (int row_local = 0; row_local < ilu->num_rows_local;
             ++row_local) {
         for (int idx = ilu->LU.row_ptr[row_local];
                 idx < ilu->LU.row_ptr[row_local + 1];
