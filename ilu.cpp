@@ -800,6 +800,7 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
     utils::print_local_dense(ilu);
     share_dependencies(ilu);  // TODO uwspółbierznić
     ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
+    utils::print_local_dense(ilu);
 
     std::vector<int> interior_nodes(ilu->num_interior);
     std::iota(interior_nodes.begin(), interior_nodes.end(), 0);
