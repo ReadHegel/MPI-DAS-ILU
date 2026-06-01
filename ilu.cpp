@@ -1040,7 +1040,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
             }
         }
         
-        y = y_new
+        y = y_new;
     } while (
         MPI_Allreduce(&converged, &all_converged, 1, MPI_C_BOOL, MPI_LAND, MPI_COMM_WORLD), 
         !all_converged
