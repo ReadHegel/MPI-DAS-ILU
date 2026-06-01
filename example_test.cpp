@@ -162,7 +162,7 @@ int main(int argc, char* argv[])
     }
 
     test_vector(ilu, N, v1);
-    //test_vector(ilu, N, v2);
+    test_vector(ilu, N, v2);
 
     ILU_free(ilu);
     MPI_Finalize();
