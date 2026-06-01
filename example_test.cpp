@@ -76,8 +76,8 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     double* res = (double*) malloc(n_local_rows * sizeof(double));
     ILU_solve(ilu, v_part, x);
     // print vector x
-    for (int rank = 0; rank < world_size; rank++) {
-        if (rank == ilu->rank) {
+    for (int r = 0; r < world_size; r++) {
+        if (r == rank) {
             for (int i = 0; i < n_local_rows; i++) {
                 printf("%f ", x[i]);
             }
