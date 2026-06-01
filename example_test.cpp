@@ -5,6 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <mpi.h>
+#include <iostream>
 
 #include "ilu.h"
 
