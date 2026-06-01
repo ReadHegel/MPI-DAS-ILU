@@ -184,7 +184,7 @@ bool is_zero(double val) {
     return std::abs(val) < EPS;
 }
 
-bool get_first_row_of_process(int rank, int world_size, int N) {
+int get_first_row_of_process(int rank, int world_size, int N) {
     return rank * N / world_size;
 };
 
