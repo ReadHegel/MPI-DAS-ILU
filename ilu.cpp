@@ -1011,13 +1011,14 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
                 if (solve_type == SolveType::L) {
                     if (global_col < ilu->global_offset) {
                         Ey_ext[loc_row] += external_vec[global_col] * ilu->LU.val[idx];
-                        std::cout<<"Ey_ext["<<loc_row<<"] += "<<external_vec[global_col]<<" * "<<ilu->LU.val[idx]<<std::endl;
-                        std::cout<<"index: "<<idx<<" global_col: "<<global_col<<" loc_row: "<<loc_row<<std::endl;
-                    }
+                       }
                 }
                 else {
                     if (global_col > ilu->global_offset) {
                         Ey_ext[loc_row] += external_vec[global_col] * ilu->LU.val[idx];
+                        std::cout<<"Ey_ext["<<loc_row<<"] += "<<external_vec[global_col]<<" * "<<ilu->LU.val[idx]<<std::endl;
+                        std::cout<<"index: "<<idx<<" global_col: "<<global_col<<" loc_row: "<<loc_row<<std::endl;
+                    
                     }
                 }
             }
