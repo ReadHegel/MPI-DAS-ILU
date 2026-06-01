@@ -17,6 +17,8 @@
 #include <vector>
 #include <unistd.h>
 
+const double EPS = 1e-6;
+
 struct CSRMatrix {
     int num_rows;
     int num_cols;
@@ -114,17 +116,11 @@ struct CSRMatrix {
 };
 
 struct CommunicationTopology {
-    // local_row -> ranks I need to send to this rows
-    std::vector<std::vector<int>> L_lcrow_to_ranks_to_send;
-    // (global_row -> rank from which I need to receive the row)
-    std::unordered_map<int, int> L_glbrow_to_rank_to_recv;
-    std::unordered_map<int, int> L_glbrow_row_nnz_to_recv;
-
-    // local_row -> ranks I need to send to this rows
-    std::vector<std::vector<int>> U_lcrow_to_ranks_to_send;
-    // (global_row -> rank from which I need to receive the row)
-    std::unordered_map<int, int> U_glbrow_to_rank_to_recv;
-    std::unordered_map<int, int> U_glbrow_row_nnz_to_recv;
+    // local_row -> ranks I need to send this row to
+    std::vector<std::vector<int>> lcrow_to_ranks_to_send;
+    // global_row -> rank from which I need to receive the row
+    std::unordered_map<int, int> glbrow_to_rank_to_recv;
+    std::unordered_map<int, int> glbrow_row_nnz_to_recv;
 };
 
 struct RowElem {
@@ -175,7 +171,8 @@ struct ILUFact {
 
     std::vector<int> first_col_in_separator_idx;
 
-    CommunicationTopology communication_topology;  // row -> {ranks}
+    CommunicationTopology lower_rank_topo;
+    CommunicationTopology higher_rank_topo;
 
     std::vector<std::vector<RowElem>> recv_row_buffers;
     std::vector<MPI_Request> active_recv_requests;
@@ -679,29 +676,28 @@ void setup_communication_topology(struct ILUFact *ilu) {
     auto [rows_to_recv, rows_to_send] = share_needed_rows(ilu, needed_rows_from_rank, requests_count_to_send, requests_count_to_recv);
     auto [nnz_to_recv, nnz_to_send] = share_nnz(ilu, rows_to_recv, rows_to_send);
 
-    // Setup ilu->communication_topology
-    ilu->communication_topology.L_lcrow_to_ranks_to_send.resize(ilu->num_rows_local);
-    ilu->communication_topology.U_lcrow_to_ranks_to_send.resize(ilu->num_rows_local);
+    ilu->lower_rank_topo.lcrow_to_ranks_to_send.resize(ilu->num_rows_local);
+    ilu->higher_rank_topo.lcrow_to_ranks_to_send.resize(ilu->num_rows_local);
     for (int p = 0; p < ilu->world_size; ++p) {
         for (int global_row : rows_to_send[p]) {
             int local_row = global_row - ilu->global_offset;
             if (p > ilu->rank) {
-                ilu->communication_topology.L_lcrow_to_ranks_to_send[local_row].push_back(p);
+                ilu->lower_rank_topo.lcrow_to_ranks_to_send[local_row].push_back(p);
             }
             else if (p < ilu->rank) {
-                ilu->communication_topology.U_lcrow_to_ranks_to_send[local_row].push_back(p);
+                ilu->higher_rank_topo.lcrow_to_ranks_to_send[local_row].push_back(p);
             }
         }
         for (size_t i = 0; i < rows_to_recv[p].size(); ++i) {
             int global_row = rows_to_recv[p][i];
             int nnz = nnz_to_recv[p][i];
             if (p < ilu->rank) {
-                ilu->communication_topology.L_glbrow_to_rank_to_recv[global_row] = p;
-                ilu->communication_topology.L_glbrow_row_nnz_to_recv[global_row] = nnz;
+                ilu->lower_rank_topo.glbrow_to_rank_to_recv[global_row] = p;
+                ilu->lower_rank_topo.glbrow_row_nnz_to_recv[global_row] = nnz;
             }
             else if (p > ilu->rank) {
-                ilu->communication_topology.U_glbrow_to_rank_to_recv[global_row] = p;
-                ilu->communication_topology.U_glbrow_row_nnz_to_recv[global_row] = nnz;
+                ilu->higher_rank_topo.glbrow_to_rank_to_recv[global_row] = p;
+                ilu->higher_rank_topo.glbrow_row_nnz_to_recv[global_row] = nnz;
             }
         }
     }
@@ -710,10 +706,10 @@ void setup_communication_topology(struct ILUFact *ilu) {
 void share_dependencies(struct ILUFact *ilu) {
     setup_communication_topology(ilu);
 
-    auto &topo = ilu->communication_topology;
-    for (const auto &[global_row, src_rank] : topo.L_glbrow_to_rank_to_recv) {
+    auto &topo = ilu->lower_rank_topo;
+    for (const auto &[global_row, src_rank] : topo.glbrow_to_rank_to_recv) {
         post_row_irecv(
-            ilu, global_row, src_rank, topo.L_glbrow_row_nnz_to_recv.at(global_row)
+            ilu, global_row, src_rank, topo.glbrow_row_nnz_to_recv.at(global_row)
         );
     }
     ilu->count_active_requests = ilu->active_recv_requests.size();
@@ -842,7 +838,7 @@ void broadcast_new_rows(
             };
         }
 
-        for (int rank : ilu->communication_topology.L_lcrow_to_ranks_to_send[local_row]) {
+        for (int rank : ilu->lower_rank_topo.lcrow_to_ranks_to_send[local_row]) {
             MPI_Send(
                 data_to_send.data(),
                 nnz * sizeof(RowElem),
@@ -941,15 +937,114 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
     return ilu;
 }
 
-auto dist_async_solve_L(struct ILUFact *ilu, const std::vector<double> &b) {
-    auto y = solve_L(ilu->LU, b);
+auto share_vector(struct ILUFact *ilu, const std::vector<double> &vec, const CommunicationTopology &topo) {
+    std::unordered_map<int, double> external_vec;
+    std::vector<MPI_Request> requests;
+    for (const auto &[global_row, src_rank] : topo.glbrow_to_rank_to_recv) {
+        MPI_Request req;
+        external_vec[global_row] = 0;
+        MPI_Irecv(
+            &external_vec[global_row],
+            1,
+            MPI_DOUBLE,
+            src_rank,
+            global_row,
+            MPI_COMM_WORLD,
+            &req
+        );
+        requests.push_back(req);
+    }
+    for (int local_row = 0; local_row < (int)topo.lcrow_to_ranks_to_send.size(); ++local_row) {
+        int global_row = local_row + ilu->global_offset;
+        for (int dest_rank : topo.lcrow_to_ranks_to_send[local_row]) {
+            MPI_Request req;
+            MPI_Isend(
+                vec.data() + local_row,
+                1,
+                MPI_DOUBLE,
+                dest_rank,
+                global_row,
+                MPI_COMM_WORLD,
+                &req
+            );
+            requests.push_back(req);
+        }
+    }
+    
+    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+    return external_vec;
+}
 
-    // int residue;
-    // do {
-    //     // Recieve rows
-    //     // Send rows
-    //
-    // while ()
+enum class SolveType {
+    L,
+    U
+};
+
+auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveType solve_type) {
+    std::vector<double> y;
+    switch (solve_type) {
+        case SolveType::L:
+            y = solve_L(ilu->LU, b);
+            break;
+        case SolveType::U:
+            y = solve_U(ilu->LU, b);
+            break;
+    }
+
+    std::vector<double> external_vec;
+    bool converged = false;
+    bool all_converged = false;
+
+    do { 
+        auto external_vec = share_vector(
+            ilu,
+            y,
+            solve_type == SolveType::L ? ilu->lower_rank_topo : ilu->higher_rank_topo
+        );
+ 
+        Ey_ext = std::vector<double>(ilu->num_rows_local, 0);
+        for (int loc_row = 0; loc_row < ilu->num_rows_local; ++loc_row) {
+            for (int idx = ilu->LU.row_ptr[loc_row]; idx < ilu->LU.row_ptr[loc_row + 1]; ++idx) {
+                int global_col = ilu->LU.col_idx[idx];
+                if (solve_type == SolveType::L) {
+                    if (global_col < ilu->global_offset) {
+                        Ey_ext[loc_row] += external_vec[global_col] * ilu->LU.val[idx];
+                    }
+                }
+                else {
+                    if (global_col > ilu->global_offset) {
+                        Ey_ext[loc_row] += external_vec[global_col] * ilu->LU.val[idx];
+                    }
+                }
+            }
+        }
+
+        for (int i = 0; i < Ey_ext.size(); ++i) {
+            Ey_ext[i] = b[i] - Ey_ext[i];
+        }
+
+        std::vector<double> y_new;
+        switch (solve_type) {
+            case SolveType::L:
+                y_new = solve_L(ilu->LU, Ey_ext);
+                break;
+            case SolveType::U:
+                y_new = solve_U(ilu->LU, Ey_ext);
+                break;
+        }
+
+        converged = true;
+        for (int i = 0; i < y_new.size(); ++i) {
+            if (abs(y_new[i] - y[i]) > EPS) {
+                converged = false;
+            }
+        }
+        
+        y = y_new
+    } while (
+        MPI_Allreduce(&converged, &all_converged, 1, MPI_C_BOOL, MPI_LAND, MPI_COMM_WORLD), 
+        !all_converged
+    );
 
     return y;
 }
@@ -957,9 +1052,9 @@ auto dist_async_solve_L(struct ILUFact *ilu, const std::vector<double> &b) {
 void ILU_solve(struct ILUFact *ilu, double *b, double *res) {
     // 1. Zastosowanie permutacji do wektora b
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
-    // b_vec = utils::permutation::apply_permutation(b_vec, ilu->perm);
-    // b_vec = dist_async_solve_L(ilu, b_vec);
-    // b_vec = dist_async_solve_U(ilu, b_vec);
+    b_vec = utils::permutation::apply_permutation(b_vec, ilu->perm);
+    b_vec = dist_async_solve(ilu, b_vec, SolveType::L);
+    b_vec = dist_async_solve(ilu, b_vec, SolveType::U);
 
     memcpy(res, b_vec.data(), ilu->num_rows_local * sizeof(double));
 }

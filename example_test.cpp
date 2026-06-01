@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <mpi.h>
 #include <iostream>
-
+#include <unistd.h>
 #include "ilu.h"
 
 using namespace std;
@@ -75,6 +75,17 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     double* x = (double*) malloc(n_local_rows * sizeof(double));
     double* res = (double*) malloc(n_local_rows * sizeof(double));
     ILU_solve(ilu, v_part, x);
+    // print vector x
+    for (int rank = 0; rank < world_size; rank++) {
+        if (rank == ilu->rank) {
+            for (int i = 0; i < n_local_rows; i++) {
+                printf("%f ", x[i]);
+            }
+            printf("\n");
+        }
+        MPI_Barrier(MPI_COMM_WORLD);
+        usleep(10000);
+    }
     ILU_multiply(ilu, x, res);
     for (int i = first_row; i < last_row; i++)
     {

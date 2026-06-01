@@ -1,1 +1,1 @@
-JOB_ID=$(sacct -XPno jobid | tail -1); tail --follow logs/DAS-ILU-"$JOB_ID"*
+JOB_ID=$(sacct -XPno jobid | tail -1); cat logs/DAS-ILU-"$JOB_ID"*
