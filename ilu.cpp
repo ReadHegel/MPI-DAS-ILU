@@ -1023,10 +1023,10 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
         std::vector<double> y_new;
         switch (solve_type) {
             case SolveType::L:
-                y_new = solve_L(ilu->LU, Ey_ext);
+                y_new = solve_L(ilu->LU, Ey_ext, ilu->global_offset);
                 break;
             case SolveType::U:
-                y_new = solve_U(ilu->LU, Ey_ext);
+                y_new = solve_U(ilu->LU, Ey_ext, ilu->global_offset);
                 break;
         }
 
