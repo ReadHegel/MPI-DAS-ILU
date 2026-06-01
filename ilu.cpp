@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <vector>
 #include <unistd.h>
+#include <ranges>
 
 struct CSRMatrix {
     int num_rows;
@@ -113,6 +114,20 @@ struct CSRMatrix {
     }
 };
 
+struct CommunicationTopology {
+    // local_row -> ranks I need to send to this rows
+    std::vector<std::vector<int>> L_lcrow_to_ranks_to_send;
+    // (global_row -> rank from which I need to receive the row)
+    std::unordered_map<int, int> L_glbrow_to_rank_to_recv;
+    std::unordered_map<int, int> L_glbrow_row_nnz_to_recv;
+
+    // local_row -> ranks I need to send to this rows
+    std::vector<std::vector<int>> U_lcrow_to_ranks_to_send;
+    // (global_row -> rank from which I need to receive the row)
+    std::unordered_map<int, int> U_glbrow_to_rank_to_recv;
+    std::unordered_map<int, int> U_glbrow_row_nnz_to_recv;
+};
+
 struct RowElem {
     int col;
     double val;
@@ -161,7 +176,7 @@ struct ILUFact {
 
     std::vector<int> first_col_in_separator_idx;
 
-    std::unordered_map<int, std::vector<int>> send_to_ranks;  // row -> {ranks}
+    CommunicationTopology communication_topology;  // row -> {ranks}
 
     std::vector<std::vector<RowElem>> recv_row_buffers;
     std::vector<MPI_Request> active_recv_requests;
@@ -489,24 +504,26 @@ void interior_separator_partition(struct ILUFact *ilu) {
     }
 }
 
-void share_dependencies(struct ILUFact *ilu) {
-    // Calculate my dependencies
+auto calculate_needed_rows_from_other_ranks(struct ILUFact *ilu) {
     std::vector<std::set<int>> needed_rows_from_rank(ilu->world_size);
 
     for (int row_local = ilu->num_interior; row_local < ilu->num_rows_local;
-         ++row_local) {
+            ++row_local) {
         for (int idx = ilu->LU.row_ptr[row_local];
-             idx < ilu->LU.row_ptr[row_local + 1];
-             ++idx) {
+                idx < ilu->LU.row_ptr[row_local + 1];
+                ++idx) {
             int global_col = ilu->LU.col_idx[idx];
 
-            if (global_col < ilu->global_offset) {
-                int owner_rank = utils::get_owner_rank(global_col, ilu->world_size, ilu->N);
+            int owner_rank = utils::get_owner_rank(global_col, ilu->world_size, ilu->N);
+            if (owner_rank != ilu->rank) {
                 needed_rows_from_rank[owner_rank].insert(global_col);
             }
         }
     }
+    return needed_rows_from_rank;
+}
 
+auto share_needed_rows_nnz(struct ILUFact *ilu, const std::vector<std::set<int>> &needed_rows_from_rank) {
     // Share and recieve amount of rows each rank needs from other ranks
     std::vector<int> requests_count_to_send(ilu->world_size, 0);
     std::vector<int> requests_count_to_recv(ilu->world_size, 0);
@@ -525,6 +542,15 @@ void share_dependencies(struct ILUFact *ilu) {
         MPI_COMM_WORLD
     );
 
+    return std::make_pair(requests_count_to_send, requests_count_to_recv);
+}
+
+auto share_needed_rows(
+    struct ILUFact *ilu,
+    const std::vector<std::set<int>> &needed_rows_from_rank, 
+    const std::vector<int> &requests_count_to_send,
+    const std::vector<int> &requests_count_to_recv
+) {
     std::vector<std::vector<int>> rows_to_recv(ilu->world_size);
     std::vector<std::vector<int>> rows_to_send(ilu->world_size);
     std::vector<MPI_Request> requests;
@@ -568,16 +594,17 @@ void share_dependencies(struct ILUFact *ilu) {
     }
 
     MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+    return std::make_pair(rows_to_recv, rows_to_send);
+}
 
-    for (int p = 0; p < ilu->world_size; ++p) {
-        for (int global_row : rows_to_send[p]) {
-            ilu->send_to_ranks[global_row].push_back(p);
-        }
-    }
-
+auto share_nnz(
+    struct ILUFact *ilu,
+    const std::vector<std::vector<int>> &rows_to_recv,
+    const std::vector<std::vector<int>> &rows_to_send
+) {
     std::vector<std::vector<int>> nnz_to_send(ilu->world_size);
     std::vector<std::vector<int>> nnz_to_recv(ilu->world_size);
-    requests.clear();
+    std::vector<MPI_Request> requests;
 
     for (int p = 0; p < ilu->world_size; ++p) {
         if (!rows_to_send[p].empty()) {
@@ -622,29 +649,71 @@ void share_dependencies(struct ILUFact *ilu) {
     MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
     requests.clear();
 
+    return std::make_pair(nnz_to_recv, nnz_to_send);
+}
+
+void post_row_irecv(struct ILUFact *ilu, int global_row, int src_rank, int nnz) {
+    ilu->recv_row_buffers.emplace_back(nnz);
+
+    MPI_Request req;
+    MPI_Irecv(
+        ilu->recv_row_buffers.back().data(),
+        nnz * sizeof(RowElem),
+        MPI_BYTE,
+        src_rank,
+        global_row,
+        MPI_COMM_WORLD,
+        &req
+    );
+
+    ilu->active_recv_requests.push_back(req);
+    ilu->request_to_row_idx.push_back(global_row);
+    ilu->row_idx_to_request_idx[global_row] =
+        ilu->active_recv_requests.size() - 1;
+}
+
+void setup_communication_topology(struct ILUFact *ilu) {
+    // Calculate my dependencies
+    auto needed_rows_from_rank = calculate_needed_rows_from_other_ranks(ilu);
+    auto [requests_count_to_send, requests_count_to_recv] = share_needed_rows_nnz(ilu, needed_rows_from_rank);
+
+    auto [rows_to_recv, rows_to_send] = share_needed_rows(ilu, needed_rows_from_rank, requests_count_to_send, requests_count_to_recv);
+    auto [nnz_to_recv, nnz_to_send] = share_nnz(ilu, rows_to_recv, rows_to_send);
+
+    // Setup ilu->communication_topology
+    ilu->communication_topology.L_lcrow_to_ranks_to_send.resize(ilu->num_rows_local);
+    ilu->communication_topology.U_lcrow_to_ranks_to_send.resize(ilu->num_rows_local);
     for (int p = 0; p < ilu->world_size; ++p) {
-        for (size_t i = 0; i < rows_to_recv[p].size(); ++i) {
-            int global_row = rows_to_recv[p][i];
-            int nnz = nnz_to_recv[p][i];
-
-            ilu->recv_row_buffers.emplace_back(nnz);
-
-            MPI_Request req;
-            MPI_Irecv(
-                ilu->recv_row_buffers.back().data(),
-                nnz * sizeof(RowElem),
-                MPI_BYTE,
-                p,
-                global_row,
-                MPI_COMM_WORLD,
-                &req
-            );
-
-            ilu->active_recv_requests.push_back(req);
-            ilu->request_to_row_idx.push_back(global_row);
-            ilu->row_idx_to_request_idx[global_row] =
-                ilu->active_recv_requests.size() - 1;
+        for (int global_row : rows_to_send[p]) {
+            int local_row = global_row - ilu->global_offset;
+            if (p < ilu->rank) {
+                ilu->communication_topology.L_lcrow_to_ranks_to_send[local_row].push_back(p);
+            }
+            else if (p > ilu->rank) {
+                ilu->communication_topology.U_lcrow_to_ranks_to_send[local_row].push_back(p);
+            }
         }
+        for (auto const& [global_row, nnz] : std::views::zip(rows_to_recv[p], nnz_to_recv[p])) {
+            if (p < ilu->rank) {
+                ilu->communication_topology.L_glbrow_to_rank_to_recv[global_row] = p;
+                ilu->communication_topology.L_glbrow_row_nnz_to_recv[global_row] = nnz;
+            }
+            else if (p > ilu->rank) {
+                ilu->communication_topology.U_glbrow_to_rank_to_recv[global_row] = p;
+                ilu->communication_topology.U_glbrow_row_nnz_to_recv[global_row] = nnz;
+            }
+        }
+    }
+}
+
+void share_dependencies(struct ILUFact *ilu) {
+    setup_communication_topology(ilu);
+
+    auto &topo = ilu->communication_topology;
+    for (const auto &[global_row, src_rank] : topo.L_glbrow_to_rank_to_recv) {
+        post_row_irecv(
+            ilu, global_row, src_rank, topo.L_glbrow_row_nnz_to_recv.at(global_row)
+        );
     }
     ilu->count_active_requests = ilu->active_recv_requests.size();
 }
@@ -772,7 +841,7 @@ void broadcast_new_rows(
             };
         }
 
-        for (auto &rank : ilu->send_to_ranks[global_row]) {
+        for (int rank : ilu->communication_topology.L_lcrow_to_ranks_to_send[local_row]) {
             MPI_Send(
                 data_to_send.data(),
                 nnz * sizeof(RowElem),
@@ -785,6 +854,44 @@ void broadcast_new_rows(
     }
 }
 
+auto solve_L(struct CSRMatrix &LU, const std::vector<double> &b) {
+    std::vector<double> x(LU.num_rows, 0);
+    for (int i = 0; i < LU.num_rows; ++i) {
+        double cum = 0;
+        for (int j = LU.row_ptr[i]; j < LU.row_ptr[i + 1]; ++j) {
+            int col = LU.col_idx[j];
+            if (col < i) {
+                cum += LU.val[j] * x[col];
+            } else { 
+                break;
+            }
+        }
+        x[i] = b[i] - cum;
+    }
+    return x;
+}
+
+auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b) {
+    std::vector<double> x(LU.num_rows, 0);
+    for (int i = LU.num_rows - 1; i >= 0; --i) {
+        double cum = 0;
+        int diag_idx = -1;
+        for (int j = LU.row_ptr[i]; j < LU.row_ptr[i + 1]; ++j) {
+            int col = LU.col_idx[j];
+            if (col > i) {
+                cum += LU.val[j] * x[col];
+            } 
+            else if (col == i) {
+                diag_idx = j;
+                continue;
+            } else {
+                throw std::runtime_error("Expected to find diagonal element in received row");
+            }
+        }
+        x[i] = (b[i] - cum) / LU.val[diag_idx];
+    }
+    return x;
+}
 }  // namespace
 
 // ================================================
@@ -834,7 +941,7 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
 }
 
 auto dist_async_solve_L(struct ILUFact *ilu, const std::vector<double> &b) {
-    std::vector<double> y(ilu->num_rows_local, 0);
+    auto y = solve_L(ilu->LU, b);
 
     // int residue;
     // do {
