@@ -737,6 +737,8 @@ std::vector<int> incorporate_received_row(
         auto first_col_in_separator_idx =
             ilu->first_col_in_separator_idx[local_row_sep - ilu->num_interior];
 
+        std::cout<<"global_row: "<<global_row<<" first_col_in_separator_idx: "<<first_col_in_separator_idx<<std::endl;
+
         if (ilu->LU.col_idx[first_col_in_separator_idx] == global_row) {
             if (ILU_row_with_externals(
                     ilu, local_row_sep, first_col_in_separator_idx
@@ -815,8 +817,6 @@ struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
             MPI_STATUS_IGNORE
         );
         ilu->count_active_requests--;
-
-        std::cout<<"received row: "<<ilu->request_to_row_idx[indx]<<std::endl;
 
         auto new_ready_rows_loc = incorporate_received_row(ilu, indx);
         if (!new_ready_rows_loc.empty()) {
