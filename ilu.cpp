@@ -999,6 +999,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
         if (solve_type == SolveType::U) {
             // print topo
             usleep(100000);
+            cout<<"higher_rank_topo"<<std::endl;
             for (const auto &[global_row, src_rank] : ilu->higher_rank_topo.glbrow_to_rank_to_recv) {
                 std::cout<<"global_row: "<<global_row<<" src_rank: "<<src_rank<<std::endl;
             }
