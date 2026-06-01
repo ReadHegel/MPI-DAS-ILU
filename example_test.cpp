@@ -105,6 +105,9 @@ int main(int argc, char* argv[])
 {
     assert(argc == 2);
 
+    std::ios_base::sync_with_stdio(false);
+    std::cout.rdbuf()->pubsetbuf(nullptr, 0);
+
     int rank;
     int world_size;
     MPI_Init(&argc, &argv);
