@@ -998,6 +998,11 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
             y,
             solve_type == SolveType::L ? ilu->lower_rank_topo : ilu->higher_rank_topo
         );
+
+        std::cout<<"external_vec: "<<external_vec.size()<<std::endl;
+        for (const auto &[global_row, val] : external_vec) {
+            std::cout<<"global_row: "<<global_row<<" val: "<<val<<std::endl;
+        }
  
         std::vector<double> Ey_ext(ilu->num_rows_local, 0);
         for (int loc_row = 0; loc_row < ilu->num_rows_local; ++loc_row) {

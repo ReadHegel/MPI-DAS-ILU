@@ -84,7 +84,7 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
             printf("\n");
         }
         MPI_Barrier(MPI_COMM_WORLD);
-        usleep(10000);
+        usleep(100000);
     }
     ILU_multiply(ilu, x, res);
     for (int i = first_row; i < last_row; i++)
@@ -152,7 +152,7 @@ int main(int argc, char* argv[])
     }
 
     test_vector(ilu, N, v1);
-    test_vector(ilu, N, v2);
+    //test_vector(ilu, N, v2);
 
     ILU_free(ilu);
     MPI_Finalize();
