@@ -996,20 +996,20 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
             solve_type == SolveType::L ? ilu->lower_rank_topo : ilu->higher_rank_topo
         );
 
-        if (solve_type == SolveType::U) {
-            // print topo
-            usleep(100000);
-            std::cout<<"higher_rank_topo"<<std::endl;
-            for (const auto &[global_row, src_rank] : ilu->higher_rank_topo.glbrow_to_rank_to_recv) {
-                std::cout<<"global_row: "<<global_row<<" src_rank: "<<src_rank<<std::endl;
-            }
-            for (const auto &[global_row, src_rank] : ilu->higher_rank_topo.glbrow_to_rank_to_recv) {
-                std::cout<<"global_row: "<<global_row<<" src_rank: "<<src_rank<<std::endl;
-            }
-            for (const auto &[global_row, nnz] : ilu->higher_rank_topo.glbrow_row_nnz_to_recv) {
-                std::cout<<"global_row: "<<global_row<<" nnz: "<<nnz<<std::endl;
-            }
-        }
+        // if (solve_type == SolveType::U) {
+        //     // print topo
+        //     usleep(100000);
+        //     std::cout<<"higher_rank_topo"<<std::endl;
+        //     for (const auto &[global_row, src_rank] : ilu->higher_rank_topo.glbrow_to_rank_to_recv) {
+        //         std::cout<<"global_row: "<<global_row<<" src_rank: "<<src_rank<<std::endl;
+        //     }
+        //     for (const auto &[global_row, src_rank] : ilu->higher_rank_topo.glbrow_to_rank_to_recv) {
+        //         std::cout<<"global_row: "<<global_row<<" src_rank: "<<src_rank<<std::endl;
+        //     }
+        //     for (const auto &[global_row, nnz] : ilu->higher_rank_topo.glbrow_row_nnz_to_recv) {
+        //         std::cout<<"global_row: "<<global_row<<" nnz: "<<nnz<<std::endl;
+        //     }
+        // }
  
         std::vector<double> Ey_ext(ilu->num_rows_local, 0);
         for (int loc_row = 0; loc_row < ilu->num_rows_local; ++loc_row) {
@@ -1023,9 +1023,6 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
                 else {
                     if (global_col >= ilu->global_offset + ilu->LU.num_rows) {
                         Ey_ext[loc_row] += external_vec[global_col] * ilu->LU.val[idx];
-                        std::cout<<"Ey_ext["<<loc_row<<"] += "<<external_vec[global_col]<<" * "<<ilu->LU.val[idx]<<std::endl;
-                        std::cout<<"index: "<<idx<<" global_col: "<<global_col<<" loc_row: "<<loc_row<<std::endl;
-                    
                     }
                 }
             }
@@ -1073,9 +1070,25 @@ void ILU_solve(struct ILUFact *ilu, double *b, double *res) {
 
 void ILU_multiply(struct ILUFact *ilu, double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
-    // b_vec = multiply_U(ilu, b_vec);
-    // b_vec = multiply_L(ilu, b_vec);
-    memcpy(res, b_vec.data(), ilu->num_rows_local * sizeof(double));
+    std::vector<double> result(ilu->num_rows_local, 0);
+    
+    auto ext_lower = share_vector(ilu, b_vec, ilu->lower_rank_topo);
+    auto ext_upper = share_vector(ilu, b_vec, ilu->higher_rank_topo);
+
+    for (int local_row = 0; local_row < ilu->num_rows_local; ++local_row) {
+        for (int idx = ilu->LU.row_ptr[local_row]; idx < ilu->LU.row_ptr[local_row + 1]; ++idx) {
+            int global_col = ilu->LU.col_idx[idx];
+            if (global_col < ilu->global_offset) {
+                result[local_row] += ext_lower[global_col] * ilu->LU.val[idx];
+            }
+            else if (global_col >= ilu->global_offset + ilu->LU.num_rows) {
+                result[local_row] += ext_upper[global_col] * ilu->LU.val[idx];
+            } else {
+                result[local_row] += ilu->LU.val[idx] * b_vec[global_col - ilu->global_offset];
+            }
+        }
+    }
+    memcpy(res, result.data(), ilu->num_rows_local * sizeof(double));
 }
 
 void ILU_free(struct ILUFact *ilu) {
