@@ -19,6 +19,10 @@
 
 const double EPS = 1e-6;
 
+#define FOR_CSR(matrix_ptr, row_var, idx_var) \
+    for (int row_var = 0; row_var < (matrix_ptr)->num_rows; ++row_var) \
+        for (int idx_var = (matrix_ptr)->row_ptr[row_var]; idx_var < (matrix_ptr)->row_ptr[row_var + 1]; ++idx_var)
+
 struct CSRMatrix {
     int num_rows;
     int num_cols;
@@ -1072,22 +1076,35 @@ void ILU_multiply(struct ILUFact *ilu, double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     std::vector<double> result(ilu->num_rows_local, 0);
     
-    auto ext_lower = share_vector(ilu, b_vec, ilu->lower_rank_topo);
-    auto ext_upper = share_vector(ilu, b_vec, ilu->higher_rank_topo);
+    auto ext_higer = share_vector(ilu, b_vec, ilu->higher_rank_topo);
 
-    for (int local_row = 0; local_row < ilu->num_rows_local; ++local_row) {
-        for (int idx = ilu->LU.row_ptr[local_row]; idx < ilu->LU.row_ptr[local_row + 1]; ++idx) {
-            int global_col = ilu->LU.col_idx[idx];
-            if (global_col < ilu->global_offset) {
-                result[local_row] += ext_lower[global_col] * ilu->LU.val[idx];
-            }
-            else if (global_col >= ilu->global_offset + ilu->LU.num_rows) {
-                result[local_row] += ext_upper[global_col] * ilu->LU.val[idx];
-            } else {
-                result[local_row] += ilu->LU.val[idx] * b_vec[global_col - ilu->global_offset];
-            }
+    // multiply by U
+    FOR_CSR(&ilu->LU, local_row, idx) {
+        int global_col = ilu->LU.col_idx[idx];
+        if (global_col >= ilu->global_offset + ilu->LU.num_rows) {
+            result[local_row] += ext_higer[global_col] * ilu->LU.val[idx];
+        } else if (global_col >= local_row + ilu->global_offset) {
+            result[local_row] += ilu->LU.val[idx] * b_vec[global_col - ilu->global_offset];
         }
     }
+
+    b_vec = result;
+    result.assign(ilu->num_rows_local, 0);
+    auto ext_lower = share_vector(ilu, b_vec, ilu->lower_rank_topo);
+
+    // multiply by L
+    FOR_CSR(&ilu->LU, local_row, idx) {
+        int global_col = ilu->LU.col_idx[idx];
+        if (global_col < ilu->global_offset) {
+            result[local_row] += ext_lower[global_col] * ilu->LU.val[idx];
+        } else if (global_col < local_row + ilu->global_offset) {
+            result[local_row] += ilu->LU.val[idx] * b_vec[global_col - ilu->global_offset];
+        }
+        else if (global_col == local_row + ilu->global_offset) {
+            result[local_row] += 1 * b_vec[global_col - ilu->global_offset];
+        }
+    }
+
     memcpy(res, result.data(), ilu->num_rows_local * sizeof(double));
 }
 
