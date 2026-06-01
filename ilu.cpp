@@ -432,6 +432,11 @@ void permute_rows(
             perm_col_idx.push_back(global_row);
             perm_val.push_back(0.0);
         }
+        std::cout<<"row_local: "<<row_local<<" global_row: "<<global_row<<" has_diagonal: "<<has_diagonal<<std::endl;
+        for (int i = 0; i < perm_col_idx.size(); ++i) {
+            std::cout<<perm_col_idx[i]<<" "<<perm_val[i]<<std::endl;
+        }
+        std::cout<<std::endl;
 
         perm_row_ptr.push_back(static_cast<int>(perm_col_idx.size()));
     }
