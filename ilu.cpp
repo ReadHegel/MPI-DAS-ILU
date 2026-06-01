@@ -999,9 +999,11 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
             solve_type == SolveType::L ? ilu->lower_rank_topo : ilu->higher_rank_topo
         );
 
-        std::cout<<"external_vec: "<<external_vec.size()<<std::endl;
-        for (const auto &[global_row, val] : external_vec) {
-            std::cout<<"global_row: "<<global_row<<" val: "<<val<<std::endl;
+        if (solve_type == SolveType::U) {
+            std::cout<<"external_vec: "<<external_vec.size()<<std::endl;
+            for (const auto &[global_row, val] : external_vec) {
+                std::cout<<"global_row: "<<global_row<<" val: "<<val<<std::endl;
+            }
         }
  
         std::vector<double> Ey_ext(ilu->num_rows_local, 0);
