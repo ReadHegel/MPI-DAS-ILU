@@ -419,6 +419,10 @@ void permute_rows(
         int row_start = LU.row_ptr[original_row];
         int row_end = LU.row_ptr[original_row + 1];
 
+        if (row_local >= ilu->num_interior) {
+            ilu->first_col_in_separator_idx.push_back(row_start);
+        }
+
         bool has_diagonal = false;
         for (int idx = row_start; idx < row_end; ++idx) {
             if (!has_diagonal && LU.col_idx[idx] > global_row) {
@@ -460,7 +464,6 @@ void interior_separator_partition(struct ILUFact *ilu) {
              ++idx) {
             if (LU.col_idx[idx] < ilu->global_offset) {
                 is_separator = true;
-                ilu->first_col_in_separator_idx.push_back(idx);
                 break;
             }
         }
@@ -739,6 +742,7 @@ std::vector<int> incorporate_received_row(
 
         std::cout<<"global_row: "<<global_row<<" first_col_in_separator_idx: "<<first_col_in_separator_idx<<std::endl;
 
+        std::cout<<"ilu->LU.col_idx[first_col_in_separator_idx]: "<<ilu->LU.col_idx[first_col_in_separator_idx]<<std::endl;
         if (ilu->LU.col_idx[first_col_in_separator_idx] == global_row) {
             if (ILU_row_with_externals(
                     ilu, local_row_sep, first_col_in_separator_idx
