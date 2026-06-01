@@ -685,10 +685,10 @@ void setup_communication_topology(struct ILUFact *ilu) {
     for (int p = 0; p < ilu->world_size; ++p) {
         for (int global_row : rows_to_send[p]) {
             int local_row = global_row - ilu->global_offset;
-            if (p < ilu->rank) {
+            if (p > ilu->rank) {
                 ilu->communication_topology.L_lcrow_to_ranks_to_send[local_row].push_back(p);
             }
-            else if (p > ilu->rank) {
+            else if (p < ilu->rank) {
                 ilu->communication_topology.U_lcrow_to_ranks_to_send[local_row].push_back(p);
             }
         }
