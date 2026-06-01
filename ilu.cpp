@@ -414,38 +414,8 @@ void permute_rows(
         int row_start = LU.row_ptr[original_row];
         int row_end = LU.row_ptr[original_row + 1];
 
-        std::vector<std::pair<int, double>> row_data;
-        row_data.reserve(row_end - row_start);
-
-        for (int idx = row_start; idx < row_end; ++idx) {
-            int global_col = LU.col_idx[idx];
-            double val = LU.val[idx];
-
-            int permuted_col = global_col;
-
-            if (global_col >= global_offset &&
-                global_col < global_offset + LU.num_rows) {
-                int local_col = global_col - global_offset;
-                permuted_col = global_offset + perm[local_col];
-            }
-
-            row_data.push_back({permuted_col, val});
-        }
-
-        std::sort(
-            row_data.begin(),
-            row_data.end(),
-            [](const std::pair<int, double> &a,
-               const std::pair<int, double> &b) {
-                return a.first < b.first;
-            }
-        );
-
-        for (const auto &item : row_data) {
-            perm_col_idx.push_back(item.first);
-            perm_val.push_back(item.second);
-        }
-
+        perm_val.insert(perm_val.end(), LU.val.begin() + row_start, LU.val.begin() + row_end);
+        perm_col_idx.insert(perm_col_idx.end(), LU.col_idx.begin() + row_start, LU.col_idx.begin() + row_end);
         perm_row_ptr.push_back(perm_col_idx.size());
     }
 
