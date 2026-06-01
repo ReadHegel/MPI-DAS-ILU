@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
+#include <unistd.h>
 
 struct CSRMatrix {
     int num_rows;
@@ -221,8 +222,11 @@ void print_local_dense(const struct ILUFact *ilu) {
                 std::cout << "\n";
             }
             std::cout << std::flush;
+
+            usleep(10000);
         }
         MPI_Barrier(MPI_COMM_WORLD);
+        usleep(10000);
     }
     MPI_Barrier(MPI_COMM_WORLD);
 }
