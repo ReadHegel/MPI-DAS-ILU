@@ -880,9 +880,9 @@ auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b) {
             } 
             else if (col == i) {
                 diag_idx = j;
-                continue;
+                break;
             } else {
-                throw std::runtime_error("Expected to find diagonal element in received row");
+                throw std::runtime_error("Expected to find diagonal in row while solving U");
             }
         }
         x[i] = (b[i] - cum) / LU.val[diag_idx];
