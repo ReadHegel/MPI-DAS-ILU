@@ -1088,22 +1088,22 @@ void ILU_multiply(struct ILUFact *ilu, double *b, double *res) {
         }
     }
 
-    // b_vec = result;
-    // result.assign(ilu->num_rows_local, 0);
-    // auto ext_lower = share_vector(ilu, b_vec, ilu->lower_rank_topo);
+    b_vec = result;
+    result.assign(ilu->num_rows_local, 0);
+    auto ext_lower = share_vector(ilu, b_vec, ilu->lower_rank_topo);
 
-    // // multiply by L
-    // FOR_CSR(&ilu->LU, local_row, idx) {
-    //     int global_col = ilu->LU.col_idx[idx];
-    //     if (global_col < ilu->global_offset) {
-    //         result[local_row] += ext_lower[global_col] * ilu->LU.val[idx];
-    //     } else if (global_col < local_row + ilu->global_offset) {
-    //         result[local_row] += ilu->LU.val[idx] * b_vec[global_col - ilu->global_offset];
-    //     }
-    //     else if (global_col == local_row + ilu->global_offset) {
-    //         result[local_row] += 1 * b_vec[global_col - ilu->global_offset];
-    //     }
-    // }
+    // multiply by L
+    FOR_CSR(&ilu->LU, local_row, idx) {
+        int global_col = ilu->LU.col_idx[idx];
+        if (global_col < ilu->global_offset) {
+            result[local_row] += ext_lower[global_col] * ilu->LU.val[idx];
+        } else if (global_col < local_row + ilu->global_offset) {
+            result[local_row] += ilu->LU.val[idx] * b_vec[global_col - ilu->global_offset];
+        }
+        else if (global_col == local_row + ilu->global_offset) {
+            result[local_row] += 1 * b_vec[global_col - ilu->global_offset];
+        }
+    }
 
     memcpy(res, result.data(), ilu->num_rows_local * sizeof(double));
 }
