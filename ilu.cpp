@@ -16,7 +16,6 @@
 #include <unordered_map>
 #include <vector>
 #include <unistd.h>
-#include <ranges>
 
 struct CSRMatrix {
     int num_rows;
@@ -693,7 +692,9 @@ void setup_communication_topology(struct ILUFact *ilu) {
                 ilu->communication_topology.U_lcrow_to_ranks_to_send[local_row].push_back(p);
             }
         }
-        for (auto const& [global_row, nnz] : std::views::zip(rows_to_recv[p], nnz_to_recv[p])) {
+        for (size_t i = 0; i < rows_to_recv[p].size(); ++i) {
+            int global_row = rows_to_recv[p][i];
+            int nnz = nnz_to_recv[p][i];
             if (p < ilu->rank) {
                 ilu->communication_topology.L_glbrow_to_rank_to_recv[global_row] = p;
                 ilu->communication_topology.L_glbrow_row_nnz_to_recv[global_row] = nnz;
