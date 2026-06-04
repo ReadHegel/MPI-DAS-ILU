@@ -227,7 +227,7 @@ void print_local_dense(const struct ILUFact *ilu) {
                         current_col++;
                     }
                     std::cout << std::setw(7) << std::fixed
-                              << std::setprecision(3) << mat.val[idx];
+                              << std::setprecision(5) << mat.val[idx];
                     current_col++;
                 }
                 while (current_col < ilu->N) {
