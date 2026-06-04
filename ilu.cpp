@@ -209,6 +209,8 @@ int get_owner_rank(int global_row, int world_size, int N) {
 }
 
 void print_local_dense(const struct ILUFact *ilu) {
+    const int precision = 5;
+    const int width = 9;
     MPI_Barrier(MPI_COMM_WORLD);
     for (int p = 0; p < ilu->world_size; ++p) {
         if (ilu->rank == p) {
@@ -223,15 +225,15 @@ void print_local_dense(const struct ILUFact *ilu) {
                      ++idx) {
                     int target_col = mat.col_idx[idx];
                     while (current_col < target_col) {
-                        std::cout << std::setw(7) << "*";
+                        std::cout << std::setw(width) << "*";
                         current_col++;
                     }
-                    std::cout << std::setw(7) << std::fixed
-                              << std::setprecision(5) << mat.val[idx];
+                    std::cout << std::setw(width) << std::fixed
+                              << std::setprecision(precision) << mat.val[idx];
                     current_col++;
                 }
                 while (current_col < ilu->N) {
-                    std::cout << std::setw(7) << "*";
+                    std::cout << std::setw(width) << "*";
                     current_col++;
                 }
                 std::cout << "\n";
