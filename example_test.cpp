@@ -58,7 +58,7 @@ void read_matrix(char* in_file, int* N, int* nnz, int** row, int** col, double**
         free(line);
 }
 
-void print_vectors(double* v_part, double* res, int n_local_rows, int rank)
+void print_vectors(double* v_part, double* res, int n_local_rows, int rank, int world_size)
 {
     for (int r = 0; r < world_size; r++) {
         if (r == rank) {
@@ -112,7 +112,7 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     //     usleep(100000);
     // }
 
-    print_vectors(v_part, res, n_local_rows, rank);
+    print_vectors(v_part, res, n_local_rows, rank, world_size);
     for (int i = first_row; i < last_row; i++)
     {
         if (abs(v_part[i - first_row] - res[i - first_row]) > EPS)
