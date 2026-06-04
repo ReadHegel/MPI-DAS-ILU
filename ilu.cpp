@@ -1047,7 +1047,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
         }
 
         converged = true;
-        int max_diff = 0;
+        double max_diff = 0;
         for (int i = 0; i < y_new.size(); ++i) {
             max_diff = std::max(max_diff, std::abs(y_new[i] - y[i]));
             if (std::abs(y_new[i] - y[i]) > EPS) {
