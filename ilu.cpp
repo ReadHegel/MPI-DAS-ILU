@@ -1047,15 +1047,18 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
         }
 
         converged = true;
+        int max_diff = 0;
         for (int i = 0; i < y_new.size(); ++i) {
+            max_diff = std::max(max_diff, std::abs(y_new[i] - y[i]));
             if (std::abs(y_new[i] - y[i]) > EPS) {
                 converged = false;
+                
             }
         }
         
         y = y_new;
         cnt_iter++;
-        std::cout<<"cnt_iter: "<<cnt_iter<<std::endl;
+        std::cout<<"cnt_iter: "<<cnt_iter<<" max_diff: "<<max_diff<<std::endl;
     } while (
         MPI_Allreduce(&converged, &all_converged, 1, MPI_C_BOOL, MPI_LAND, MPI_COMM_WORLD), 
         !all_converged
