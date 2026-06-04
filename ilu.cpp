@@ -1064,7 +1064,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
 void ILU_solve(struct ILUFact *ilu, double *b, double *res) {
     // 1. Zastosowanie permutacji do wektora b
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
-    b_vec = utils::permutation::apply_permutation(b_vec, ilu->perm);
+    b_vec = utils::permutation::apply_permutation(b_vec, ilu->inv_perm);
     b_vec = dist_async_solve(ilu, b_vec, SolveType::L);
     b_vec = dist_async_solve(ilu, b_vec, SolveType::U);
 
@@ -1104,7 +1104,7 @@ void ILU_multiply(struct ILUFact *ilu, double *b, double *res) {
         }
     }
 
-    result = utils::permutation::apply_permutation(result, ilu->inv_perm);
+    result = utils::permutation::apply_permutation(result, ilu->perm);
     memcpy(res, result.data(), ilu->num_rows_local * sizeof(double));
 }
 
