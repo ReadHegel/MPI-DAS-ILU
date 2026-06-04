@@ -58,6 +58,20 @@ void read_matrix(char* in_file, int* N, int* nnz, int** row, int** col, double**
         free(line);
 }
 
+void print_vectors(double* v_part, double* res, int n_local_rows, int rank)
+{
+    for (int r = 0; r < world_size; r++) {
+        if (r == rank) {
+            for (int i = 0; i < n_local_rows; i++) {
+                printf("v: %f , res: %f\n, diff: %f\n", v_part[i], res[i], abs(v_part[i] - res[i]));
+            }
+            printf("\n");
+        }
+        MPI_Barrier(MPI_COMM_WORLD);
+        usleep(100000);
+    }
+}
+
 bool test_vector(struct ILUFact* ilu, int N, double* v)
 {
     int rank;
@@ -97,6 +111,8 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     //     MPI_Barrier(MPI_COMM_WORLD);
     //     usleep(100000);
     // }
+
+    print_vectors(v_part, res, n_local_rows, rank);
     for (int i = first_row; i < last_row; i++)
     {
         if (abs(v_part[i - first_row] - res[i - first_row]) > EPS)
