@@ -13,7 +13,7 @@ using namespace std;
 
 #define N_TESTS 10
 
-#define EPS 10e-1
+#define EPS 10e-4
 
 int test_rank_first_row(int rank, int N, int world_size)
 {
