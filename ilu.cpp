@@ -992,6 +992,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
     bool converged = false;
     bool all_converged = false;
 
+    int cnt_iter = 0;
     do { 
         auto external_vec = share_vector(
             ilu,
@@ -1053,6 +1054,8 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
         }
         
         y = y_new;
+        cnt_iter++;
+        std::cout<<"cnt_iter: "<<cnt_iter<<std::endl;
     } while (
         MPI_Allreduce(&converged, &all_converged, 1, MPI_C_BOOL, MPI_LAND, MPI_COMM_WORLD), 
         !all_converged
