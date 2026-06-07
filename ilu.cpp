@@ -17,7 +17,7 @@
 #include <vector>
 #include <unistd.h>
 
-const double EPS = 1e-6;
+const double EPS = 1e-10;
 
 #define FOR_CSR(matrix_ptr, row_var, idx_var) \
     for (int row_var = 0; row_var < (matrix_ptr)->num_rows; ++row_var) \
