@@ -998,6 +998,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
     bool converged = false;
     bool all_converged = false;
 
+    int cnt_iter = 0;
     do { 
         auto external_vec = share_vector(
             ilu,
@@ -1060,6 +1061,9 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
                 
             }
         }
+        cout<<"max_diff: "<<max_diff<<endl;
+        cout<<"cnt_iter: "<<cnt_iter<<endl;
+        cnt_iter++;
         
         y = y_new;
     } while (
