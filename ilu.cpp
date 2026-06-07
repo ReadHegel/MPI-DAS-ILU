@@ -957,8 +957,9 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
     share_permutation(ilu);
-    permute_columns(ilu);
     utils::print_local_dense(ilu);
+    permute_columns(ilu);
+
     share_dependencies(ilu);  // TODO uwspółbierznić
     ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
 
