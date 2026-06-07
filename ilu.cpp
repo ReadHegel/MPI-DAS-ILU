@@ -992,7 +992,6 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
     bool converged = false;
     bool all_converged = false;
 
-    int cnt_iter = 0;
     do { 
         auto external_vec = share_vector(
             ilu,
@@ -1057,8 +1056,6 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
         }
         
         y = y_new;
-        cnt_iter++;
-        std::cout<<"cnt_iter: "<<cnt_iter<<" max_diff: "<<max_diff<<std::endl;
     } while (
         MPI_Allreduce(&converged, &all_converged, 1, MPI_C_BOOL, MPI_LAND, MPI_COMM_WORLD), 
         !all_converged
@@ -1072,7 +1069,7 @@ void ILU_solve(struct ILUFact *ilu, const double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     b_vec = utils::permutation::apply_permutation(b_vec, ilu->perm);
     b_vec = dist_async_solve(ilu, b_vec, SolveType::L);
-    b_vec = dist_async_solve(ilu, b_vec, SolveType::U);
+    //b_vec = dist_async_solve(ilu, b_vec, SolveType::U);
 
     memcpy(res, b_vec.data(), ilu->num_rows_local * sizeof(double));
 }
