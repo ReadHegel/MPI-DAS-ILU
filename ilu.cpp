@@ -941,9 +941,8 @@ void permute_columns(struct ILUFact *ilu) {
 struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, const double* val) {
     struct ILUFact *ilu = new ILUFact();
 
-    int rank, world_size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &ilu->rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &ilu->world_size);
     
     distribute_data(N, nnz, row, col, val, ilu);
     utils::print_local_dense(ilu);
