@@ -4,11 +4,11 @@
 
 struct ILUFact;
 
-struct ILUFact* ILU_factorize(int N, int nnz, int* row, int* col, double* val);
+struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, const double* val);
 
-void ILU_solve(struct ILUFact* ilu, double* b, double* res);
+void ILU_solve(struct ILUFact* ilu, const double* b, double* res);
 
-void ILU_multiply(struct ILUFact* ilu, double* b, double* res);
+void ILU_multiply(struct ILUFact* ilu, const double* b, double* res);
 
 void ILU_free(struct ILUFact* ilu);
 

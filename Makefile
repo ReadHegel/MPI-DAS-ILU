@@ -1,5 +1,5 @@
 CXX			= CC
-CXXFLAGS	= -O3 -Wall -g
+CXXFLAGS	= -O3 -Wall -g -std=c++2a
 
 DEPS 	= ilu.h
 OBJ 	= ilu.o example_test.o 
