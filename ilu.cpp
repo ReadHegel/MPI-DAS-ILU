@@ -947,12 +947,10 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     distribute_data(N, nnz, row, col, val, ilu);
     utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
-    utils::print_local_dense(ilu);
     share_permutation(ilu);
-    utils::print_local_dense(ilu);
     permute_columns(ilu);
-    utils::print_local_dense(ilu);
-    
+
+
     share_dependencies(ilu);  // TODO uwspółbierznić
     ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
 
@@ -960,6 +958,8 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     std::iota(interior_nodes.begin(), interior_nodes.end(), 0);
     broadcast_new_rows(ilu, interior_nodes);
 
+
+    utils::print_local_dense(ilu);
     while (ilu->count_active_requests > 0) {
         int indx;
         MPI_Waitany(
