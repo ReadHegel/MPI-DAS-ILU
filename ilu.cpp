@@ -338,11 +338,7 @@ void distribute_data(
     };
 
     MPI_Bcast(&N, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-    ilu->global_offset = get_first_row_of_process(ilu->rank);
-    ilu->num_rows_local =
-        get_first_row_of_process(ilu->rank + 1) - ilu->global_offset;
-    ilu->N = N;
+    ilu->setup(N, ilu->world_size, ilu->rank);
 
     recived_matrix.num_rows = ilu->num_rows_local;
     recived_matrix.num_cols = N;
@@ -927,9 +923,6 @@ void share_permutation(struct ILUFact *ilu) {
             ilu->global_perm[i] += ilu->first_row_in_rank[r];
         }
     }
-    for (int i = 0; i < ilu->N; ++i) { // TO DO czy potrzebne? 
-        ilu->global_inv_perm[ilu->global_perm[i]] = i;
-    }
 }
 
 void permute_columns(struct ILUFact *ilu) {
@@ -951,8 +944,7 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     int rank, world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    ilu->setup(N, world_size, rank);
-
+    
     distribute_data(N, nnz, row, col, val, ilu);
     utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
