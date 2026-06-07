@@ -7,4 +7,4 @@
 #SBATCH --tasks-per-node 3          # each node is 2 socket, 12 core, so we want 24 tasks on each node
 #SBATCH --time 00:00:20               # if the job runs longer than this, it'll be killed
 
-srun --label ./example_test matrices/cage4.mtx
+srun --label ./example_test matrices/bcspwr01.mtx
