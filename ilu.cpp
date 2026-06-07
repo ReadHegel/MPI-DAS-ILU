@@ -859,6 +859,9 @@ auto solve_L(struct CSRMatrix &LU, const std::vector<double> &b, int global_offs
         double cum = 0;
         for (int j = LU.row_ptr[i]; j < LU.row_ptr[i + 1]; ++j) {
             int col_local = LU.col_idx[j] - global_offset;
+            if (col_local < 0) {
+                continue;
+            }
             if (col_local < i) {
                 cum += LU.val[j] * x[col_local];
             } else { 
