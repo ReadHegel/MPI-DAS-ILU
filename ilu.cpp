@@ -299,7 +299,7 @@ void ILU(
 }
 
 void distribute_data(
-    int N, int nnz, int *row, int *col, double *val, struct ILUFact *ilu
+    int N, int nnz, const int *row, const int *col, const double *val, struct ILUFact *ilu
 ) {
     CSRMatrix &recived_matrix = ilu->LU;
 
