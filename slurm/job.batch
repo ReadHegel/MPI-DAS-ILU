@@ -3,7 +3,7 @@
 #SBATCH --output "logs/DAS-ILU-%j.out"   # stdout redirection
 #SBATCH --error "logs/DAS-ILU-%j.err"    # stderr redirection
 #SBATCH --account "g105-2692"         # the number of our grant
-#SBATCH --nodes 2                     # how many nodes we want
+#SBATCH --nodes 1                     # how many nodes we want
 #SBATCH --tasks-per-node 12         # each node is 2 socket, 12 core, so we want 24 tasks on each node
 #SBATCH --time 00:01:20               # if the job runs longer than this, it'll be killed
 
