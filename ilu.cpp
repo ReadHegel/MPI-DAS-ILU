@@ -880,6 +880,9 @@ auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b, int global_offs
         int diag_idx = -1;
         for (int j = LU.row_ptr[i + 1] - 1; j >= LU.row_ptr[i]; --j) {
             int col_local = LU.col_idx[j] - global_offset;
+            if (col_local >= LU.num_rows) {
+                continue;
+            }
             if (col_local > i) {
                 cum += LU.val[j] * x[col_local];
             } 
