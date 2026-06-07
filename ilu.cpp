@@ -1124,7 +1124,7 @@ void ILU_multiply(struct ILUFact *ilu, const double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     std::vector<double> result(ilu->num_rows_local, 0);
 
-    b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_perm);
+    b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
     
     auto ext_higher = share_vector(ilu, b_vec, ilu->higher_rank_topo);
 
@@ -1155,7 +1155,7 @@ void ILU_multiply(struct ILUFact *ilu, const double *b, double *res) {
         }
     }
 
-    result = utils::permutation::apply_permutation(result, ilu->local_inv_perm);
+    result = utils::permutation::apply_permutation(result, ilu->local_perm);
     memcpy(res, result.data(), ilu->num_rows_local * sizeof(double));
 }
 
