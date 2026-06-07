@@ -966,12 +966,6 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
     share_permutation(ilu);
-    // print permutation
-    std::cout<<"global_perm: ";
-    for (int i = 0; i < ilu->N; ++i) {
-        std::cout<<ilu->global_perm[i]<<" ";
-    }
-    std::cout<<std::endl;
     permute_columns(ilu);
 
 
@@ -982,8 +976,6 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     std::iota(interior_nodes.begin(), interior_nodes.end(), 0);
     broadcast_new_rows(ilu, interior_nodes);
 
-
-    utils::print_local_dense(ilu);
     while (ilu->count_active_requests > 0) {
         int indx;
         MPI_Waitany(
