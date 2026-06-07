@@ -925,11 +925,29 @@ void share_permutation(struct ILUFact *ilu) {
     }
 }
 
+void sort_row(CSRMatrix &LU, int row) {
+    int row_start = LU.row_ptr[row];
+    int row_end = LU.row_ptr[row + 1];
+    std::vector<std::pair<int, double>> row_elems;
+    row_elems.reserve(row_end - row_start);
+    for (int i = row_start; i < row_end; ++i) {
+        row_elems.push_back({LU.col_idx[i], LU.val[i]});
+    }
+    std::sort(row_elems.begin(), row_elems.end(), [&](const std::pair<int, double> &a, const std::pair<int, double> &b) {
+        return a.first < b.first;
+    }); 
+    for (int i = row_start; i < row_end; ++i) {
+        LU.col_idx[i] = row_elems[i - row_start].first;
+        LU.val[i] = row_elems[i - row_start].second;
+    }
+}
+
 void permute_columns(struct ILUFact *ilu) {
     for (int i = 0; i < ilu->num_rows_local; ++i) {
         for (int j = ilu->LU.row_ptr[i]; j < ilu->LU.row_ptr[i + 1]; ++j) {
             ilu->LU.col_idx[j] = ilu->global_perm[ilu->LU.col_idx[j]];
         }
+        sort_row(ilu->LU, i);
     }
 }
 }  // namespace
@@ -948,6 +966,12 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
     share_permutation(ilu);
+    // print permutation
+    std::cout<<"global_perm: ";
+    for (int i = 0; i < ilu->N; ++i) {
+        std::cout<<ilu->global_perm[i]<<" ";
+    }
+    std::cout<<std::endl;
     permute_columns(ilu);
 
 
