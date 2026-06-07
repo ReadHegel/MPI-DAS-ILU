@@ -1061,10 +1061,10 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
                 
             }
         }
-        cout<<"max_diff: "<<max_diff<<endl;
-        cout<<"cnt_iter: "<<cnt_iter<<endl;
+        std::cout<<"max_diff: "<<max_diff<<std::endl;
+        std::cout<<"cnt_iter: "<<cnt_iter<<std::endl;
         cnt_iter++;
-        
+
         y = y_new;
     } while (
         MPI_Allreduce(&converged, &all_converged, 1, MPI_C_BOOL, MPI_LAND, MPI_COMM_WORLD), 
