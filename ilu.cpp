@@ -147,6 +147,22 @@ struct RowElem {
         return {cols, vals};
     }
 };
+namespace {
+namespace utils {
+    bool is_zero(double val) {
+        const double EPS = 1e-12;
+        return std::abs(val) < EPS;
+    }
+    
+    int get_first_row_of_process(int rank, int world_size, int N) {
+        return rank * N / world_size;
+    }
+    
+    int get_owner_rank(int global_row, int world_size, int N) {
+        return (global_row * world_size + world_size - 1) / N;
+    }
+}
+} // namespace
 
 struct ILUFact {
     int N;
@@ -160,16 +176,10 @@ struct ILUFact {
     int num_separator;
     std::vector<bool> is_separator_ready;
 
-    int glob_to_loc_row(int global_row) const {
-        return global_row - global_offset;
-    }
-
-    int loc_to_glob_row(int local_row) const {
-        return local_row + global_offset;
-    }
-
-    std::vector<int> perm;
-    std::vector<int> inv_perm;
+    std::vector<int> local_perm;
+    std::vector<int> local_inv_perm;
+    std::vector<int> global_perm;
+    std::vector<int> global_inv_perm;
 
     CSRMatrix LU;  // Unified matrix for both L and U
 
@@ -177,6 +187,8 @@ struct ILUFact {
 
     CommunicationTopology lower_rank_topo;
     CommunicationTopology higher_rank_topo;
+    std::vector<int> first_row_in_rank;
+    std::vector<int> num_rows_in_rank;
 
     std::vector<std::vector<RowElem>> recv_row_buffers;
     std::vector<MPI_Request> active_recv_requests;
@@ -185,6 +197,35 @@ struct ILUFact {
         row_idx_to_request_idx;  // global row -> request idx in
                                  // active_recv_requests
     int count_active_requests;
+
+    int glob_to_loc_row(int global_row) const {
+        return global_row - global_offset;
+    }
+
+    int loc_to_glob_row(int local_row) const {
+        return local_row + global_offset;
+    }
+
+    void setup(int N, int world_size, int rank) {
+        this->N = N;
+        this->world_size = world_size;
+        this->rank = rank;
+
+        first_row_in_rank.resize(world_size);
+        num_rows_in_rank.resize(world_size);
+
+        first_row_in_rank[0] = 0;
+        for (int i = 1; i < world_size; ++i) {
+            first_row_in_rank[i] = utils::get_first_row_of_process(i, world_size, N);
+            num_rows_in_rank[i - 1] = first_row_in_rank[i] - first_row_in_rank[i - 1];
+        }
+        num_rows_in_rank[world_size - 1] = N - first_row_in_rank[world_size - 1];
+
+        this->global_offset = first_row_in_rank[rank];
+        this->num_rows_local = num_rows_in_rank[rank];
+    }
+
+
 };
 
 namespace {
@@ -195,18 +236,7 @@ namespace {
 
 namespace utils {
 
-bool is_zero(double val) {
-    const double EPS = 1e-12;
-    return std::abs(val) < EPS;
-}
 
-int get_first_row_of_process(int rank, int world_size, int N) {
-    return rank * N / world_size;
-}
-
-int get_owner_rank(int global_row, int world_size, int N) {
-    return (global_row * world_size + world_size - 1) / N;
-}
 
 void print_local_dense(const struct ILUFact *ilu) {
     const int precision = 5;
@@ -414,44 +444,25 @@ void distribute_data(
     }
 }
 
-void permute_rows(
-    CSRMatrix &LU,
-    const int global_offset,
-    const std::vector<int> &perm,
-    const std::vector<int> &inv_perm
-) {
+void permute_rows(CSRMatrix &LU, const std::vector<int> &inv_perm) {
     std::vector<int> perm_row_ptr;
     std::vector<int> perm_col_idx;
     std::vector<double> perm_val;
 
     perm_row_ptr.reserve(LU.num_rows + 1);
-    perm_col_idx.reserve(LU.nnz + LU.num_rows);
-    perm_val.reserve(LU.nnz + LU.num_rows);
+    perm_col_idx.reserve(LU.nnz);
+    perm_val.reserve(LU.nnz);
 
     perm_row_ptr.push_back(0);
 
     for (int row_local = 0; row_local < LU.num_rows; ++row_local) {
         int original_row = inv_perm[row_local];
-        const int global_row = global_offset + row_local;
         int row_start = LU.row_ptr[original_row];
         int row_end = LU.row_ptr[original_row + 1];
 
-        bool has_diagonal = false;
         for (int idx = row_start; idx < row_end; ++idx) {
-            if (!has_diagonal && LU.col_idx[idx] > global_row) {
-                perm_col_idx.push_back(global_row);
-                perm_val.push_back(0.0);
-                has_diagonal = true;
-            }
-            if (LU.col_idx[idx] == global_row) {
-                has_diagonal = true;
-            }
             perm_col_idx.push_back(LU.col_idx[idx]);
             perm_val.push_back(LU.val[idx]);
-        }
-        if (!has_diagonal) {
-            perm_col_idx.push_back(global_row);
-            perm_val.push_back(0.0);
         }
 
         perm_row_ptr.push_back(static_cast<int>(perm_col_idx.size()));
@@ -464,7 +475,7 @@ void permute_rows(
 }
 
 void interior_separator_partition(struct ILUFact *ilu) {
-    ilu->inv_perm.resize(ilu->num_rows_local);
+    ilu->local_inv_perm.resize(ilu->num_rows_local);
 
     std::vector<int> interor_rows;
     std::vector<int> separator_rows;
@@ -496,10 +507,10 @@ void interior_separator_partition(struct ILUFact *ilu) {
     );
     ilu->is_separator_ready.resize(ilu->num_separator, false);
 
-    ilu->inv_perm = std::move(interor_rows);
-    ilu->perm = utils::permutation::inverse_permutation(ilu->inv_perm);
+    ilu->local_inv_perm = std::move(interor_rows);
+    ilu->local_perm = utils::permutation::inverse_permutation(ilu->local_inv_perm);
 
-    permute_rows(LU, ilu->global_offset, ilu->perm, ilu->inv_perm);
+    permute_rows(LU, ilu->local_inv_perm);
 
     for (int sep_row = ilu->num_interior; sep_row < ilu->num_rows_local; ++sep_row) {
         ilu->first_col_in_separator_idx.push_back(LU.row_ptr[sep_row]);
@@ -897,6 +908,37 @@ auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b, int global_offs
     }
     return x;
 }
+
+void share_permutation(struct ILUFact *ilu) {
+    ilu->global_perm.resize(ilu->N);
+    ilu->global_inv_perm.resize(ilu->N);
+    MPI_Allgatherv(
+        ilu->local_perm.data(),
+        ilu->num_rows_local,
+        MPI_INT,
+        ilu->global_perm.data(),
+        ilu->num_rows_in_rank.data(),
+        ilu->first_row_in_rank.data(),
+        MPI_INT,
+        MPI_COMM_WORLD
+    );
+    for (int r = 0; r < ilu->world_size; ++r) {
+        for (int i = ilu->first_row_in_rank[r]; i < ilu->first_row_in_rank[r] + ilu->num_rows_in_rank[r]; ++i) {
+            ilu->global_perm[i] += ilu->first_row_in_rank[r];
+        }
+    }
+    for (int i = 0; i < ilu->N; ++i) { // TO DO czy potrzebne? 
+        ilu->global_inv_perm[ilu->global_perm[i]] = i;
+    }
+}
+
+void permute_columns(struct ILUFact *ilu) {
+    for (int i = 0; i < ilu->num_rows_local; ++i) {
+        for (int j = ilu->LU.row_ptr[i]; j < ilu->LU.row_ptr[i + 1]; ++j) {
+            ilu->LU.col_idx[j] = ilu->global_perm[ilu->LU.col_idx[j]];
+        }
+    }
+}
 }  // namespace
 
 // ================================================
@@ -906,12 +948,16 @@ auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b, int global_offs
 struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, const double* val) {
     struct ILUFact *ilu = new ILUFact();
 
-    MPI_Comm_rank(MPI_COMM_WORLD, &ilu->rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &ilu->world_size);
+    int rank, world_size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    ilu->setup(N, world_size, rank);
 
     distribute_data(N, nnz, row, col, val, ilu);
     utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
+    share_permutation(ilu);
+    permute_columns(ilu);
     share_dependencies(ilu);  // TODO uwspółbierznić
     ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
 
@@ -1077,9 +1123,10 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
 void ILU_solve(struct ILUFact *ilu, const double *b, double *res) {
     // 1. Zastosowanie permutacji do wektora b
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
-    //b_vec = utils::permutation::apply_permutation(b_vec, ilu->perm);
+    //b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_perm);
     b_vec = dist_async_solve(ilu, b_vec, SolveType::L);
     b_vec = dist_async_solve(ilu, b_vec, SolveType::U);
+    // b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
 
     memcpy(res, b_vec.data(), ilu->num_rows_local * sizeof(double));
 }
@@ -1087,6 +1134,8 @@ void ILU_solve(struct ILUFact *ilu, const double *b, double *res) {
 void ILU_multiply(struct ILUFact *ilu, const double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     std::vector<double> result(ilu->num_rows_local, 0);
+
+    // b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
     
     auto ext_higher = share_vector(ilu, b_vec, ilu->higher_rank_topo);
 
@@ -1117,7 +1166,7 @@ void ILU_multiply(struct ILUFact *ilu, const double *b, double *res) {
         }
     }
 
-    //result = utils::permutation::apply_permutation(result, ilu->inv_perm);
+    //result = utils::permutation::apply_permutation(result, ilu->local_perm);
     memcpy(res, result.data(), ilu->num_rows_local * sizeof(double));
 }
 
