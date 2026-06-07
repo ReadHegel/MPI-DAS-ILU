@@ -179,7 +179,6 @@ struct ILUFact {
     std::vector<int> local_perm;
     std::vector<int> local_inv_perm;
     std::vector<int> global_perm;
-    std::vector<int> global_inv_perm;
 
     CSRMatrix LU;  // Unified matrix for both L and U
 
@@ -907,7 +906,6 @@ auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b, int global_offs
 
 void share_permutation(struct ILUFact *ilu) {
     ilu->global_perm.resize(ilu->N);
-    ilu->global_inv_perm.resize(ilu->N);
     MPI_Allgatherv(
         ilu->local_perm.data(),
         ilu->num_rows_local,
@@ -1055,28 +1053,12 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
     bool converged = false;
     bool all_converged = false;
 
-    // int cnt_iter = 0;
     do { 
         auto external_vec = share_vector(
             ilu,
             y,
             solve_type == SolveType::L ? ilu->lower_rank_topo : ilu->higher_rank_topo
         );
-
-        // if (solve_type == SolveType::U) {
-        //     // print topo
-        //     usleep(100000);
-        //     std::cout<<"higher_rank_topo"<<std::endl;
-        //     for (const auto &[global_row, src_rank] : ilu->higher_rank_topo.glbrow_to_rank_to_recv) {
-        //         std::cout<<"global_row: "<<global_row<<" src_rank: "<<src_rank<<std::endl;
-        //     }
-        //     for (const auto &[global_row, src_rank] : ilu->higher_rank_topo.glbrow_to_rank_to_recv) {
-        //         std::cout<<"global_row: "<<global_row<<" src_rank: "<<src_rank<<std::endl;
-        //     }
-        //     for (const auto &[global_row, nnz] : ilu->higher_rank_topo.glbrow_row_nnz_to_recv) {
-        //         std::cout<<"global_row: "<<global_row<<" nnz: "<<nnz<<std::endl;
-        //     }
-        // }
  
         std::vector<double> Ey_ext(ilu->num_rows_local, 0);
         for (int loc_row = 0; loc_row < ilu->num_rows_local; ++loc_row) {
@@ -1118,9 +1100,6 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
                 
             }
         }
-        // std::cout<<"max_diff: "<<max_diff<<std::endl;
-        // std::cout<<"cnt_iter: "<<cnt_iter<<std::endl;
-        // cnt_iter++;
 
         y = y_new;
     } while (
@@ -1132,12 +1111,11 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
 }
 
 void ILU_solve(struct ILUFact *ilu, const double *b, double *res) {
-    // 1. Zastosowanie permutacji do wektora b
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
-    //b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_perm);
+    b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_perm);
     b_vec = dist_async_solve(ilu, b_vec, SolveType::L);
     b_vec = dist_async_solve(ilu, b_vec, SolveType::U);
-    // b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
+    b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
 
     memcpy(res, b_vec.data(), ilu->num_rows_local * sizeof(double));
 }
@@ -1146,7 +1124,7 @@ void ILU_multiply(struct ILUFact *ilu, const double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     std::vector<double> result(ilu->num_rows_local, 0);
 
-    // b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
+    b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
     
     auto ext_higher = share_vector(ilu, b_vec, ilu->higher_rank_topo);
 
@@ -1177,7 +1155,7 @@ void ILU_multiply(struct ILUFact *ilu, const double *b, double *res) {
         }
     }
 
-    //result = utils::permutation::apply_permutation(result, ilu->local_perm);
+    result = utils::permutation::apply_permutation(result, ilu->local_perm);
     memcpy(res, result.data(), ilu->num_rows_local * sizeof(double));
 }
 

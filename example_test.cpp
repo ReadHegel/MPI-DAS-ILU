@@ -91,16 +91,16 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     ILU_solve(ilu, v_part, x);
 
     // print vector x
-    for (int r = 0; r < world_size; r++) {
-        if (r == rank) {
-            for (int i = 0; i < n_local_rows; i++) {
-                printf("%f ", x[i]);
-            }
-            printf("\n");
-        }
-        MPI_Barrier(MPI_COMM_WORLD);
-        usleep(100000);
-    }
+    // for (int r = 0; r < world_size; r++) {
+    //     if (r == rank) {
+    //         for (int i = 0; i < n_local_rows; i++) {
+    //             printf("%f ", x[i]);
+    //         }
+    //         printf("\n");
+    //     }
+    //     MPI_Barrier(MPI_COMM_WORLD);
+    //     usleep(100000);
+    // }
 
     ILU_multiply(ilu, x, res);
 
@@ -108,7 +108,7 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     // print_vectors(v_part, res, n_local_rows, rank, world_size);
     for (int i = first_row; i < last_row; i++)
     {
-        if (abs(v_part[i - first_row] - res[i - first_row]) > EPS)
+        if (abs(v_part[i - first_row] - res[i - first_row]) > EPS || std::isnan(res[i - first_row]) || std::isinf(res[i - first_row]))
         {
             success = 0;
         }
