@@ -897,7 +897,7 @@ auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b, int global_offs
 // ILU library functions
 // ================================================
 
-struct ILUFact *ILU_factorize(int N, int nnz, int *row, int *col, double *val) {
+struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, const double* val) {
     struct ILUFact *ilu = new ILUFact();
 
     MPI_Comm_rank(MPI_COMM_WORLD, &ilu->rank);
@@ -1067,7 +1067,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
     return y;
 }
 
-void ILU_solve(struct ILUFact *ilu, double *b, double *res) {
+void ILU_solve(struct ILUFact *ilu, const double *b, double *res) {
     // 1. Zastosowanie permutacji do wektora b
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     b_vec = utils::permutation::apply_permutation(b_vec, ilu->perm);
@@ -1077,7 +1077,7 @@ void ILU_solve(struct ILUFact *ilu, double *b, double *res) {
     memcpy(res, b_vec.data(), ilu->num_rows_local * sizeof(double));
 }
 
-void ILU_multiply(struct ILUFact *ilu, double *b, double *res) {
+void ILU_multiply(struct ILUFact *ilu, const double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     std::vector<double> result(ilu->num_rows_local, 0);
     
