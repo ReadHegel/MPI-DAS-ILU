@@ -147,6 +147,7 @@ struct RowElem {
         return {cols, vals};
     }
 };
+
 namespace {
 namespace utils {
     bool is_zero(double val) {
@@ -224,18 +225,13 @@ struct ILUFact {
         this->num_rows_local = num_rows_in_rank[rank];
     }
 
-
 };
 
 namespace {
 
-// =======================================
-// UTILITIES
-// =======================================
+// ========= UTILITIES =========
 
 namespace utils {
-
-
 
 void print_local_dense(const struct ILUFact *ilu) {
     const int precision = 5;
@@ -277,6 +273,25 @@ void print_local_dense(const struct ILUFact *ilu) {
     MPI_Barrier(MPI_COMM_WORLD);
 }
 
+void sort_row(CSRMatrix &LU, int row) {
+    int row_start = LU.row_ptr[row];
+    int row_end = LU.row_ptr[row + 1];
+    std::vector<std::pair<int, double>> row_elems;
+    row_elems.reserve(row_end - row_start);
+    for (int i = row_start; i < row_end; ++i) {
+        row_elems.push_back({LU.col_idx[i], LU.val[i]});
+    }
+    std::sort(row_elems.begin(), row_elems.end(), [&](const std::pair<int, double> &a, const std::pair<int, double> &b) {
+        return a.first < b.first;
+    }); 
+    for (int i = row_start; i < row_end; ++i) {
+        LU.col_idx[i] = row_elems[i - row_start].first;
+        LU.val[i] = row_elems[i - row_start].second;
+    }
+}
+
+// ========= PERMUTATION UTILITIES =========
+
 namespace permutation {
 
 template <typename T>
@@ -296,147 +311,6 @@ std::vector<int> inverse_permutation(const std::vector<int> &perm) {
         inv_perm[perm[i]] = i;
     }
     return inv_perm;
-}
-}  // namespace permutation
-}  // namespace utils
-
-void ILU(
-    CSRMatrix &LU, int global_offset, const int num_rows_from_U_to_factorize
-) {
-    for (int i = 1; i < num_rows_from_U_to_factorize; ++i) {
-        for (int k = LU.row_ptr[i]; k < LU.row_ptr[i + 1]; ++k) {
-            int row_to_subtract_loc = LU.col_idx[k] - global_offset;
-
-            if (LU.col_idx[k] >= global_offset + i) {
-                break;
-            }
-
-            int diag_kk_idx =
-                LU.find_diag_idx(row_to_subtract_loc, global_offset);
-            LU.val[k] = LU.val[k] / LU.val[diag_kk_idx];
-
-            LU.add_mult_row_to_row(
-                -LU.val[k],
-                i,
-                LU.val.data() + diag_kk_idx + 1,
-                LU.col_idx.data() + diag_kk_idx + 1,
-                LU.row_ptr[row_to_subtract_loc + 1] -
-                    LU.row_ptr[row_to_subtract_loc] - 1
-            );
-        }
-    }
-}
-
-void distribute_data(
-    int N, int nnz, const int *row, const int *col, const double *val, struct ILUFact *ilu
-) {
-    CSRMatrix &recived_matrix = ilu->LU;
-
-    auto get_first_row_of_process = [&](int rank) {
-        return utils::get_first_row_of_process(rank, ilu->world_size, N);
-    };
-
-    MPI_Bcast(&N, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    ilu->setup(N, ilu->world_size, ilu->rank);
-
-    recived_matrix.num_rows = ilu->num_rows_local;
-    recived_matrix.num_cols = N;
-    recived_matrix.row_ptr.resize(recived_matrix.num_rows + 1);
-
-    std::vector<int> col_idx_sendcounts;
-    std::vector<int> col_idx_displacements;
-    CSRMatrix A;
-
-    if (ilu->rank == 0) {
-        A = CSRMatrix::from_COO(N, nnz, row, col, val);
-        col_idx_sendcounts.resize(ilu->world_size, 0);
-        col_idx_displacements.resize(ilu->world_size, 0);
-
-        int first_row = 0;
-        int last_row = get_first_row_of_process(1) - 1;
-
-        col_idx_displacements[0] = A.row_ptr[first_row];
-        col_idx_sendcounts[0] = A.row_ptr[last_row + 1] - A.row_ptr[first_row];
-
-        recived_matrix.nnz = col_idx_sendcounts[0];
-        std::copy(
-            A.row_ptr.begin() + first_row,
-            A.row_ptr.begin() + last_row + 2,
-            recived_matrix.row_ptr.begin()
-        );
-
-        for (int r = 1; r < ilu->world_size; ++r) {
-            first_row = last_row + 1;
-            last_row = get_first_row_of_process(r + 1) - 1;
-
-            col_idx_sendcounts[r] =
-                A.row_ptr[last_row + 1] - A.row_ptr[first_row];
-            col_idx_displacements[r] = A.row_ptr[first_row];
-
-            int nnz_for_r = col_idx_sendcounts[r];
-            MPI_Send(&nnz_for_r, 1, MPI_INT, r, 0, MPI_COMM_WORLD);
-            MPI_Send(
-                &A.row_ptr[first_row],
-                last_row - first_row + 2,
-                MPI_INT,
-                r,
-                0,
-                MPI_COMM_WORLD
-            );
-        }
-    }
-    else {
-        MPI_Recv(
-            &recived_matrix.nnz,
-            1,
-            MPI_INT,
-            0,
-            0,
-            MPI_COMM_WORLD,
-            MPI_STATUS_IGNORE
-        );
-        MPI_Recv(
-            recived_matrix.row_ptr.data(),
-            recived_matrix.num_rows + 1,
-            MPI_INT,
-            0,
-            0,
-            MPI_COMM_WORLD,
-            MPI_STATUS_IGNORE
-        );
-    }
-
-    recived_matrix.col_idx.resize(recived_matrix.nnz);
-    recived_matrix.val.resize(recived_matrix.nnz);
-
-    MPI_Scatterv(
-        ilu->rank == 0 ? A.col_idx.data() : nullptr,
-        col_idx_sendcounts.data(),
-        col_idx_displacements.data(),
-        MPI_INT,
-        recived_matrix.col_idx.data(),
-        recived_matrix.nnz,
-        MPI_INT,
-        0,
-        MPI_COMM_WORLD
-    );
-
-    MPI_Scatterv(
-        ilu->rank == 0 ? A.val.data() : nullptr,
-        col_idx_sendcounts.data(),
-        col_idx_displacements.data(),
-        MPI_DOUBLE,
-        recived_matrix.val.data(),
-        recived_matrix.nnz,
-        MPI_DOUBLE,
-        0,
-        MPI_COMM_WORLD
-    );
-
-    int offset = recived_matrix.row_ptr[0];
-    for (auto &rp : recived_matrix.row_ptr) {
-        rp -= offset;
-    }
 }
 
 void permute_rows(CSRMatrix &LU, const std::vector<int> &inv_perm) {
@@ -469,10 +343,142 @@ void permute_rows(CSRMatrix &LU, const std::vector<int> &inv_perm) {
     LU.nnz = static_cast<int>(LU.col_idx.size());
 }
 
+void permute_columns(CSRMatrix &LU, const std::vector<int> &global_perm) {
+    for (int i = 0; i < LU.num_rows; ++i) {
+        for (int j = LU.row_ptr[i]; j < LU.row_ptr[i + 1]; ++j) {
+            LU.col_idx[j] = global_perm[LU.col_idx[j]];
+        }
+        sort_row(LU, i);
+    }
+}
+
+}  // namespace permutation
+}  // namespace utils
+
+//
+// ========= Distribute data functions =========
+//
+
+void distribute_data(
+    int N, int nnz, const int *row, const int *col, const double *val, struct ILUFact *ilu
+) {
+    CSRMatrix &received_matrix = ilu->LU;
+
+    auto get_first_row_of_process = [&](int rank) {
+        return utils::get_first_row_of_process(rank, ilu->world_size, N);
+    };
+
+    MPI_Bcast(&N, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    ilu->setup(N, ilu->world_size, ilu->rank);
+
+    received_matrix.num_rows = ilu->num_rows_local;
+    received_matrix.num_cols = N;
+    received_matrix.row_ptr.resize(received_matrix.num_rows + 1);
+
+    std::vector<int> col_idx_sendcounts;
+    std::vector<int> col_idx_displacements;
+    CSRMatrix A;
+
+    if (ilu->rank == 0) {
+        A = CSRMatrix::from_COO(N, nnz, row, col, val);
+        col_idx_sendcounts.resize(ilu->world_size, 0);
+        col_idx_displacements.resize(ilu->world_size, 0);
+
+        int first_row = 0;
+        int last_row = get_first_row_of_process(1) - 1;
+
+        col_idx_displacements[0] = A.row_ptr[first_row];
+        col_idx_sendcounts[0] = A.row_ptr[last_row + 1] - A.row_ptr[first_row];
+
+        received_matrix.nnz = col_idx_sendcounts[0];
+        std::copy(
+            A.row_ptr.begin() + first_row,
+            A.row_ptr.begin() + last_row + 2,
+            received_matrix.row_ptr.begin()
+        );
+
+        for (int r = 1; r < ilu->world_size; ++r) {
+            first_row = last_row + 1;
+            last_row = get_first_row_of_process(r + 1) - 1;
+
+            col_idx_sendcounts[r] =
+                A.row_ptr[last_row + 1] - A.row_ptr[first_row];
+            col_idx_displacements[r] = A.row_ptr[first_row];
+
+            int nnz_for_r = col_idx_sendcounts[r];
+            MPI_Send(&nnz_for_r, 1, MPI_INT, r, 0, MPI_COMM_WORLD);
+            MPI_Send(
+                &A.row_ptr[first_row],
+                last_row - first_row + 2,
+                MPI_INT,
+                r,
+                0,
+                MPI_COMM_WORLD
+            );
+        }
+    }
+    else {
+        MPI_Recv(
+            &received_matrix.nnz,
+            1,
+            MPI_INT,
+            0,
+            0,
+            MPI_COMM_WORLD,
+            MPI_STATUS_IGNORE
+        );
+        MPI_Recv(
+            received_matrix.row_ptr.data(),
+            received_matrix.num_rows + 1,
+            MPI_INT,
+            0,
+            0,
+            MPI_COMM_WORLD,
+            MPI_STATUS_IGNORE
+        );
+    }
+
+    received_matrix.col_idx.resize(received_matrix.nnz);
+    received_matrix.val.resize(received_matrix.nnz);
+
+    MPI_Scatterv(
+        ilu->rank == 0 ? A.col_idx.data() : nullptr,
+        col_idx_sendcounts.data(),
+        col_idx_displacements.data(),
+        MPI_INT,
+        received_matrix.col_idx.data(),
+        received_matrix.nnz,
+        MPI_INT,
+        0,
+        MPI_COMM_WORLD
+    );
+
+    MPI_Scatterv(
+        ilu->rank == 0 ? A.val.data() : nullptr,
+        col_idx_sendcounts.data(),
+        col_idx_displacements.data(),
+        MPI_DOUBLE,
+        received_matrix.val.data(),
+        received_matrix.nnz,
+        MPI_DOUBLE,
+        0,
+        MPI_COMM_WORLD
+    );
+
+    int offset = received_matrix.row_ptr[0];
+    for (auto &rp : received_matrix.row_ptr) {
+        rp -= offset;
+    }
+}
+
+//
+// ========= Partition and permutation functions =========
+// 
+
 void interior_separator_partition(struct ILUFact *ilu) {
     ilu->local_inv_perm.resize(ilu->num_rows_local);
 
-    std::vector<int> interor_rows;
+    std::vector<int> interior_rows;
     std::vector<int> separator_rows;
 
     CSRMatrix &LU = ilu->LU;
@@ -491,26 +497,51 @@ void interior_separator_partition(struct ILUFact *ilu) {
             separator_rows.push_back(row_local);
         }
         else {
-            interor_rows.push_back(row_local);
+            interior_rows.push_back(row_local);
         }
     }
 
-    ilu->num_interior = interor_rows.size();
+    ilu->num_interior = interior_rows.size();
     ilu->num_separator = separator_rows.size();
-    interor_rows.insert(
-        interor_rows.end(), separator_rows.begin(), separator_rows.end()
+    interior_rows.insert(
+        interior_rows.end(), separator_rows.begin(), separator_rows.end()
     );
     ilu->is_separator_ready.resize(ilu->num_separator, false);
 
-    ilu->local_inv_perm = std::move(interor_rows);
+    ilu->local_inv_perm = std::move(interior_rows);
     ilu->local_perm = utils::permutation::inverse_permutation(ilu->local_inv_perm);
 
-    permute_rows(LU, ilu->local_inv_perm);
+    utils::permutation::permute_rows(LU, ilu->local_inv_perm);
 
     for (int sep_row = ilu->num_interior; sep_row < ilu->num_rows_local; ++sep_row) {
         ilu->first_col_in_separator_idx.push_back(LU.row_ptr[sep_row]);
     }
 }
+
+void share_permutation(struct ILUFact *ilu) {
+    ilu->global_perm.resize(ilu->N);
+    MPI_Allgatherv(
+        ilu->local_perm.data(),
+        ilu->num_rows_local,
+        MPI_INT,
+        ilu->global_perm.data(),
+        ilu->num_rows_in_rank.data(),
+        ilu->first_row_in_rank.data(),
+        MPI_INT,
+        MPI_COMM_WORLD
+    );
+    for (int r = 0; r < ilu->world_size; ++r) {
+        for (int i = ilu->first_row_in_rank[r]; i < ilu->first_row_in_rank[r] + ilu->num_rows_in_rank[r]; ++i) {
+            ilu->global_perm[i] += ilu->first_row_in_rank[r];
+        }
+    }
+}
+
+//
+// ========= Communication functions =========
+//
+
+void post_row_irecv(struct ILUFact *ilu, int global_row, int src_rank, int nnz); // TODO remove
 
 auto calculate_needed_rows_from_other_ranks(struct ILUFact *ilu) {
     std::vector<std::set<int>> needed_rows_from_rank(ilu->world_size);
@@ -660,26 +691,6 @@ auto share_nnz(
     return std::make_pair(nnz_to_recv, nnz_to_send);
 }
 
-void post_row_irecv(struct ILUFact *ilu, int global_row, int src_rank, int nnz) {
-    ilu->recv_row_buffers.emplace_back(nnz);
-
-    MPI_Request req;
-    MPI_Irecv(
-        ilu->recv_row_buffers.back().data(),
-        nnz * sizeof(RowElem),
-        MPI_BYTE,
-        src_rank,
-        global_row,
-        MPI_COMM_WORLD,
-        &req
-    );
-
-    ilu->active_recv_requests.push_back(req);
-    ilu->request_to_row_idx.push_back(global_row);
-    ilu->row_idx_to_request_idx[global_row] =
-        ilu->active_recv_requests.size() - 1;
-}
-
 void setup_communication_topology(struct ILUFact *ilu) {
     // Calculate my dependencies
     auto needed_rows_from_rank = calculate_needed_rows_from_other_ranks(ilu);
@@ -715,6 +726,7 @@ void setup_communication_topology(struct ILUFact *ilu) {
     }
 }
 
+
 void share_dependencies(struct ILUFact *ilu) {
     setup_communication_topology(ilu);
 
@@ -725,6 +737,86 @@ void share_dependencies(struct ILUFact *ilu) {
         );
     }
     ilu->count_active_requests = ilu->active_recv_requests.size();
+}
+
+void post_row_irecv(struct ILUFact *ilu, int global_row, int src_rank, int nnz) {
+    ilu->recv_row_buffers.emplace_back(nnz);
+
+    MPI_Request req;
+    MPI_Irecv(
+        ilu->recv_row_buffers.back().data(),
+        nnz * sizeof(RowElem),
+        MPI_BYTE,
+        src_rank,
+        global_row,
+        MPI_COMM_WORLD,
+        &req
+    );
+
+    ilu->active_recv_requests.push_back(req);
+    ilu->request_to_row_idx.push_back(global_row);
+    ilu->row_idx_to_request_idx[global_row] =
+        ilu->active_recv_requests.size() - 1;
+}
+
+void broadcast_new_rows(
+    struct ILUFact *ilu, const std::vector<int> &new_ready_rows_loc
+) {
+    for (auto &local_row : new_ready_rows_loc) {
+        int global_row = local_row + ilu->global_offset;
+        int nnz = ilu->LU.nnz_in_local_row(local_row);
+        std::vector<RowElem> data_to_send(nnz);
+
+        for (int i = ilu->LU.row_ptr[local_row];
+             i < ilu->LU.row_ptr[local_row + 1];
+             ++i) {
+            data_to_send[i - ilu->LU.row_ptr[local_row]] = {
+                ilu->LU.col_idx[i], ilu->LU.val[i]
+            };
+        }
+
+        for (int rank : ilu->lower_rank_topo.lcrow_to_ranks_to_send[local_row]) {
+            MPI_Send(
+                data_to_send.data(),
+                nnz * sizeof(RowElem),
+                MPI_BYTE,
+                rank,
+                global_row,
+                MPI_COMM_WORLD
+            );
+        }
+    }
+}
+
+//
+// ========= Factorization functions =========
+// 
+
+void ILU(
+    CSRMatrix &LU, int global_offset, const int num_rows_from_U_to_factorize
+) {
+    for (int i = 1; i < num_rows_from_U_to_factorize; ++i) {
+        for (int k = LU.row_ptr[i]; k < LU.row_ptr[i + 1]; ++k) {
+            int row_to_subtract_loc = LU.col_idx[k] - global_offset;
+
+            if (LU.col_idx[k] >= global_offset + i) {
+                break;
+            }
+
+            int diag_kk_idx =
+                LU.find_diag_idx(row_to_subtract_loc, global_offset);
+            LU.val[k] = LU.val[k] / LU.val[diag_kk_idx];
+
+            LU.add_mult_row_to_row(
+                -LU.val[k],
+                i,
+                LU.val.data() + diag_kk_idx + 1,
+                LU.col_idx.data() + diag_kk_idx + 1,
+                LU.row_ptr[row_to_subtract_loc + 1] -
+                    LU.row_ptr[row_to_subtract_loc] - 1
+            );
+        }
+    }
 }
 
 bool ILU_row_with_externals(struct ILUFact *ilu, int row_local, int first_idx) {
@@ -751,9 +843,9 @@ bool ILU_row_with_externals(struct ILUFact *ilu, int row_local, int first_idx) {
         if (col < ilu->global_offset) {
             if (ilu->active_recv_requests[ilu->row_idx_to_request_idx[col]] ==
                 MPI_REQUEST_NULL) {
-                auto &recived_row =
+                auto &received_row =
                     ilu->recv_row_buffers[ilu->row_idx_to_request_idx[col]];
-                std::tie(other_cols, other_vals) = RowElem::unpack(recived_row);
+                std::tie(other_cols, other_vals) = RowElem::unpack(received_row);
             }
             else {
                 return false;
@@ -830,34 +922,14 @@ std::vector<int> incorporate_received_row(
     return ready_rows_loc;
 }
 
-void broadcast_new_rows(
-    struct ILUFact *ilu, const std::vector<int> &new_ready_rows_loc
-) {
-    for (auto &local_row : new_ready_rows_loc) {
-        int global_row = local_row + ilu->global_offset;
-        int nnz = ilu->LU.nnz_in_local_row(local_row);
-        std::vector<RowElem> data_to_send(nnz);
+//
+// ========= Solve functions =========
+//
 
-        for (int i = ilu->LU.row_ptr[local_row];
-             i < ilu->LU.row_ptr[local_row + 1];
-             ++i) {
-            data_to_send[i - ilu->LU.row_ptr[local_row]] = {
-                ilu->LU.col_idx[i], ilu->LU.val[i]
-            };
-        }
-
-        for (int rank : ilu->lower_rank_topo.lcrow_to_ranks_to_send[local_row]) {
-            MPI_Send(
-                data_to_send.data(),
-                nnz * sizeof(RowElem),
-                MPI_BYTE,
-                rank,
-                global_row,
-                MPI_COMM_WORLD
-            );
-        }
-    }
-}
+enum class SolveType {
+    L,
+    U
+};
 
 auto solve_L(struct CSRMatrix &LU, const std::vector<double> &b, int global_offset) {
     std::vector<double> x(LU.num_rows, 0);
@@ -904,97 +976,6 @@ auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b, int global_offs
     return x;
 }
 
-void share_permutation(struct ILUFact *ilu) {
-    ilu->global_perm.resize(ilu->N);
-    MPI_Allgatherv(
-        ilu->local_perm.data(),
-        ilu->num_rows_local,
-        MPI_INT,
-        ilu->global_perm.data(),
-        ilu->num_rows_in_rank.data(),
-        ilu->first_row_in_rank.data(),
-        MPI_INT,
-        MPI_COMM_WORLD
-    );
-    for (int r = 0; r < ilu->world_size; ++r) {
-        for (int i = ilu->first_row_in_rank[r]; i < ilu->first_row_in_rank[r] + ilu->num_rows_in_rank[r]; ++i) {
-            ilu->global_perm[i] += ilu->first_row_in_rank[r];
-        }
-    }
-}
-
-void sort_row(CSRMatrix &LU, int row) {
-    int row_start = LU.row_ptr[row];
-    int row_end = LU.row_ptr[row + 1];
-    std::vector<std::pair<int, double>> row_elems;
-    row_elems.reserve(row_end - row_start);
-    for (int i = row_start; i < row_end; ++i) {
-        row_elems.push_back({LU.col_idx[i], LU.val[i]});
-    }
-    std::sort(row_elems.begin(), row_elems.end(), [&](const std::pair<int, double> &a, const std::pair<int, double> &b) {
-        return a.first < b.first;
-    }); 
-    for (int i = row_start; i < row_end; ++i) {
-        LU.col_idx[i] = row_elems[i - row_start].first;
-        LU.val[i] = row_elems[i - row_start].second;
-    }
-}
-
-void permute_columns(struct ILUFact *ilu) {
-    for (int i = 0; i < ilu->num_rows_local; ++i) {
-        for (int j = ilu->LU.row_ptr[i]; j < ilu->LU.row_ptr[i + 1]; ++j) {
-            ilu->LU.col_idx[j] = ilu->global_perm[ilu->LU.col_idx[j]];
-        }
-        sort_row(ilu->LU, i);
-    }
-}
-}  // namespace
-
-// ================================================
-// ILU library functions
-// ================================================
-
-struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, const double* val) {
-    struct ILUFact *ilu = new ILUFact();
-
-    MPI_Comm_rank(MPI_COMM_WORLD, &ilu->rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &ilu->world_size);
-    
-    distribute_data(N, nnz, row, col, val, ilu);
-    utils::print_local_dense(ilu);
-    interior_separator_partition(ilu);
-    share_permutation(ilu);
-    permute_columns(ilu);
-
-
-    share_dependencies(ilu);  // TODO uwspółbierznić
-    ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
-
-    std::vector<int> interior_nodes(ilu->num_interior);
-    std::iota(interior_nodes.begin(), interior_nodes.end(), 0);
-    broadcast_new_rows(ilu, interior_nodes);
-
-    while (ilu->count_active_requests > 0) {
-        int indx;
-        MPI_Waitany(
-            ilu->active_recv_requests.size(),
-            ilu->active_recv_requests.data(),
-            &indx,
-            MPI_STATUS_IGNORE
-        );
-        ilu->count_active_requests--;
-
-        auto new_ready_rows_loc = incorporate_received_row(ilu, indx);
-        if (!new_ready_rows_loc.empty()) {
-            broadcast_new_rows(ilu, new_ready_rows_loc);
-        }
-    }
-
-    utils::print_local_dense(ilu);
-
-    return ilu;
-}
-
 auto share_vector(struct ILUFact *ilu, const std::vector<double> &vec, const CommunicationTopology &topo) {
     std::unordered_map<int, double> external_vec;
     std::vector<MPI_Request> requests;
@@ -1032,11 +1013,6 @@ auto share_vector(struct ILUFact *ilu, const std::vector<double> &vec, const Com
     MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
     return external_vec;
 }
-
-enum class SolveType {
-    L,
-    U
-};
 
 auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveType solve_type) {
     std::vector<double> y;
@@ -1110,6 +1086,55 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
     return y;
 }
 
+}  // namespace
+
+// ================================================
+// ILU library functions
+// ================================================
+
+struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, const double* val) {
+    struct ILUFact *ilu = new ILUFact();
+
+    MPI_Comm_rank(MPI_COMM_WORLD, &ilu->rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &ilu->world_size);
+    
+    distribute_data(N, nnz, row, col, val, ilu);
+    utils::print_local_dense(ilu);
+    interior_separator_partition(ilu);
+    share_permutation(ilu);
+    utils::permutation::permute_columns(ilu->LU, ilu->global_perm);
+
+
+    share_dependencies(ilu);  // TODO uwspółbierznić
+    ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
+
+    std::vector<int> interior_nodes(ilu->num_interior);
+    std::iota(interior_nodes.begin(), interior_nodes.end(), 0);
+    broadcast_new_rows(ilu, interior_nodes);
+
+    while (ilu->count_active_requests > 0) {
+        int indx;
+        MPI_Waitany(
+            ilu->active_recv_requests.size(),
+            ilu->active_recv_requests.data(),
+            &indx,
+            MPI_STATUS_IGNORE
+        );
+        ilu->count_active_requests--;
+
+        auto new_ready_rows_loc = incorporate_received_row(ilu, indx);
+        if (!new_ready_rows_loc.empty()) {
+            broadcast_new_rows(ilu, new_ready_rows_loc);
+        }
+    }
+
+    utils::print_local_dense(ilu);
+
+    return ilu;
+}
+
+
+
 void ILU_solve(struct ILUFact *ilu, const double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
@@ -1124,6 +1149,7 @@ void ILU_multiply(struct ILUFact *ilu, const double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     std::vector<double> result(ilu->num_rows_local, 0);
 
+    // TO DO sprawdzić kolejność permutacji 
     b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
     
     auto ext_higher = share_vector(ilu, b_vec, ilu->higher_rank_topo);
