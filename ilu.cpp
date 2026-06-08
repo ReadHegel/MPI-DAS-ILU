@@ -1089,9 +1089,9 @@ bool run_separator_sweep(
 ) {
     send_separator_rows(ilu);
     receive_separator_rows(ilu);
-    utils::print_local_dense(ilu);
+    std::cout<<"here1"<<std::endl;
     restore_separator_rows(ilu);
-    utils::print_local_dense(ilu);
+    std::cout<<"here2"<<std::endl;
     factorize_separator_block(ilu);
 
     bool converged = check_factorization_converged(
