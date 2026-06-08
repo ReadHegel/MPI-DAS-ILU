@@ -13,6 +13,8 @@ BINARY="example_test"
 MATRIX="matrices/cage5.mtx"
 REPORT_DIR="${WORK_DIR}/reports"
  
+module load perftools-base
+module load perftools-lite 
 
 make clean
 make

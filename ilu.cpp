@@ -1118,12 +1118,12 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     MPI_Comm_size(MPI_COMM_WORLD, &ilu->world_size);
     
     distribute_data(N, nnz, row, col, val, ilu);
-    utils::print_local_dense(ilu);
+    //utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
     share_permutation(ilu);
     utils::permutation::permute_columns(ilu->LU, ilu->global_perm);
 
-    utils::print_local_dense(ilu);
+    //utils::print_local_dense(ilu);
     share_dependencies(ilu);  // TODO uwspółbierznić
     
     ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
