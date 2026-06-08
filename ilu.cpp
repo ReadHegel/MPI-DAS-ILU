@@ -845,7 +845,6 @@ bool ILU_row_with_externals(struct ILUFact *ilu, int row_local) {
     auto &LU = ilu->LU;
     int sep_idx = row_local - ilu->num_interior;
     auto &idx = ilu->first_col_in_separator_idx[sep_idx];
-    int first_col = LU.col_idx[idx];
 
     if (ilu->is_separator_ready[sep_idx]) {
         return false;

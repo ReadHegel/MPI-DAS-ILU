@@ -1,0 +1,47 @@
+#!/bin/bash -l
+#SBATCH --job-name DAS-ILU          # this will be shown in the queueing system
+#SBATCH --output "logs/DAS-ILU-%j.out"   # stdout redirection
+#SBATCH --error "logs/DAS-ILU-%j.err"    # stderr redirection
+#SBATCH --account "g105-2692"         # the number of our grant
+#SBATCH --nodes 1                    # how many nodes we want
+#SBATCH --tasks-per-node 4        # each node is 2 socket, 12 core, so we want 24 tasks on each node
+#SBATCH --time 00:01:20               # if the job runs longer than this, it'll be killed
+
+set -e
+
+# Sprawdzenie czy podano program
+if [ -z "$COMMAND" ]; then
+    echo "Błąd: Nie podano komendy do uruchomienia!"
+    echo "Użycie: sbatch submit_profile.sh <program> [argumenty]"
+    exit 1
+fi
+
+echo "=== Rozpoczęcie zadania SLURM ID: $SLURM_JOB_ID ==="
+echo "Data rozpoczęcia: $(date)"
+
+echo "=== Ładowanie modułów perftools ==="
+module load perftools-base
+module load perftools-lite
+
+echo "=== Uruchamianie: srun $COMMAND $ARGS ==="
+srun ./example_test matrices/cage3.mtx
+
+# 3. Automatyczne znalezienie katalogu wygenerowanego przez CrayPat
+BASENAME=$(basename $COMMAND)
+REPORT_DIR=$(ls -dt ${BASENAME}+* 2>/dev/null | head -n 1)
+
+if [ -z "$REPORT_DIR" ]; then
+    echo "Błąd: Nie znaleziono katalogu profilowania dla $BASENAME."
+    exit 1
+fi
+
+echo "=== Znaleziono katalog profilowania: $REPORT_DIR ==="
+
+# 4. Generowanie raportu tekstowego
+REPORT_FILE="report_${BASENAME}_job_${SLURM_JOB_ID}.txt"
+echo "=== Generowanie raportu pat_report do pliku: $REPORT_FILE ==="
+pat_report -o $REPORT_FILE $REPORT_DIR
+
+echo "=== Zadanie zakończone pomyślnie! ==="
+echo "Data zakończenia: $(date)"
+echo "Wygenerowany katalog do app2: $REPORT_DIR"
