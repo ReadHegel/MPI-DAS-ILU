@@ -1089,7 +1089,9 @@ bool run_separator_sweep(
 ) {
     send_separator_rows(ilu);
     receive_separator_rows(ilu);
+    utils::print_local_dense(ilu);
     restore_separator_rows(ilu);
+    utils::print_local_dense(ilu);
     factorize_separator_block(ilu);
 
     bool converged = check_factorization_converged(
@@ -1328,9 +1330,7 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     factorize_interior_block(ilu);
     exchange_interior_rows(ilu);
 
-    utils::print_local_dense(ilu);
-    factorize_separators_sweeps(ilu);   
-    utils::print_local_dense(ilu);     
+    factorize_separators_sweeps(ilu);      
     MPI_Barrier(MPI_COMM_WORLD);
 
     return ilu;
