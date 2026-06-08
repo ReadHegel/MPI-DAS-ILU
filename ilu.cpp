@@ -797,14 +797,6 @@ void broadcast_new_rows(
             };
         }
 
-        std::cout << "SEND rank=" << ilu->rank 
-          << " global_row=" << global_row
-          << " local_row=" << local_row
-          << " nnz=" << nnz;
-        for (auto &e : data_to_send)
-            std::cout << " [" << e.col << "," << e.val << "]";
-        std::cout << std::endl;
-
         for (int rank : ilu->lower_rank_topo.lcrow_to_ranks_to_send[local_row]) {
             MPI_Send(
                 data_to_send.data(),
@@ -879,12 +871,6 @@ bool ILU_row_with_externals(struct ILUFact *ilu, int row_local) {
         if (col < ilu->global_offset) {
             int req_idx = ilu->row_idx_to_request_idx.count(col) 
                 ? ilu->row_idx_to_request_idx.at(col) : -1;
-            std::cout << "rank=" << ilu->rank 
-                    << " pivot=" << col
-                    << " req_idx=" << req_idx
-                    << " buf_sz=" << (req_idx>=0 ? ilu->recv_row_buffers[req_idx].size() : -1)
-                    << " global_row_recv=" << (req_idx>=0 ? ilu->request_to_row_idx[req_idx] : -1)
-                    << std::endl;
             if (req_idx >= 0 && ilu->is_request_ready[req_idx]) {
                 auto &received_row =
                     ilu->recv_row_buffers[req_idx];
