@@ -1102,11 +1102,13 @@ bool run_separator_sweep(
 }
 
 void factorize_separators_sweeps(ILUFact *ilu) {
+    MPI_Comm sep_comm;
     if (ilu->num_separator == 0) {
+        MPI_Comm_split(MPI_COMM_WORLD, 1, ilu->rank, &sep_comm);
+        MPI_Comm_free(&sep_comm);
         return;
     }
 
-    MPI_Comm sep_comm;
     MPI_Comm_split(MPI_COMM_WORLD, 0, ilu->rank, &sep_comm);
 
     snapshot_separator_vals(ilu, ilu->separator_vals_prev);
