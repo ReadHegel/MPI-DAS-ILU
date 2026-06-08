@@ -81,6 +81,9 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
 
     MPI_Barrier(MPI_COMM_WORLD);
     double start_time = MPI_Wtime();
+    if (rank == 0) {
+        printf("Starting test\n");
+    }
 
 
     int first_row = test_rank_first_row(rank, N, world_size);
@@ -113,6 +116,7 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     double end_time = MPI_Wtime();
     double local_time = end_time - start_time;
     if (rank == 0) {
+        printf("Test finished\n");
         printf("RESULT: %f\n", local_time);
     }
 
