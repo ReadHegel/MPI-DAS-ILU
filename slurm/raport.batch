@@ -13,15 +13,7 @@ BINARY="example_test"
 MATRIX="matrices/cage5.mtx"
 REPORT_DIR="${WORK_DIR}/reports"
  
-# ─── Setup ────────────────────────────────────────────────────────────────────
-mkdir -p "${REPORT_DIR}" "${WORK_DIR}/logs"
-cd "${WORK_DIR}" || { echo "ERROR: Cannot cd to ${WORK_DIR}"; exit 1; }
- 
-# ─── Load CrayPat ─────────────────────────────────────────────────────────────
-# module load perftools-lite
- 
-# ─── Build ────────────────────────────────────────────────────────────────────
-echo "=== Building ==="
+
 make clean
 make
  
