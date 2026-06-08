@@ -234,8 +234,8 @@ namespace {
 namespace utils {
 
 void print_local_dense(const struct ILUFact *ilu) {
-    const int precision = 5;
-    const int width = 9;
+    const int precision = 3;
+    const int width = 5;
     MPI_Barrier(MPI_COMM_WORLD);
     for (int p = 0; p < ilu->world_size; ++p) {
         if (ilu->rank == p) {
@@ -1099,7 +1099,7 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     MPI_Comm_size(MPI_COMM_WORLD, &ilu->world_size);
     
     distribute_data(N, nnz, row, col, val, ilu);
-    //utils::print_local_dense(ilu);
+    utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
     share_permutation(ilu);
     utils::permutation::permute_columns(ilu->LU, ilu->global_perm);
