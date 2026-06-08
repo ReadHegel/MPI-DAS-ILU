@@ -126,6 +126,9 @@ struct CommunicationTopology {
     // global_row -> rank from which I need to receive the row
     std::unordered_map<int, int> glbrow_to_rank_to_recv;
     std::unordered_map<int, int> glbrow_row_nnz_to_recv;
+    // packed solve exchange: one MPI message per neighbor rank
+    std::unordered_map<int, std::vector<int>> rank_to_glbrows_recv;
+    std::unordered_map<int, std::vector<int>> rank_to_localrows_send;
 };
 
 struct RowElem {
@@ -710,6 +713,29 @@ auto share_nnz(
     return std::make_pair(nnz_to_recv, nnz_to_send);
 }
 
+void build_solve_exchange_groups(CommunicationTopology &topo) {
+    topo.rank_to_glbrows_recv.clear();
+    topo.rank_to_localrows_send.clear();
+    for (const auto &[global_row, src_rank] : topo.glbrow_to_rank_to_recv) {
+        topo.rank_to_glbrows_recv[src_rank].push_back(global_row);
+    }
+    for (auto &[rank, rows] : topo.rank_to_glbrows_recv) {
+        std::sort(rows.begin(), rows.end());
+    }
+    for (int local_row = 0; local_row < (int)topo.lcrow_to_ranks_to_send.size();
+         ++local_row) {
+        for (int dest_rank : topo.lcrow_to_ranks_to_send[local_row]) {
+            topo.rank_to_localrows_send[dest_rank].push_back(local_row);
+        }
+    }
+    for (auto &[rank, rows] : topo.rank_to_localrows_send) {
+        std::sort(rows.begin(), rows.end());
+        rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+    }
+}
+
+int solve_vector_tag(int N, int sender_rank) { return N + 1000 + sender_rank; }
+
 void setup_communication_topology(struct ILUFact *ilu) {
     // Calculate my dependencies
     auto needed_rows_from_rank = calculate_needed_rows_from_other_ranks(ilu);
@@ -743,6 +769,8 @@ void setup_communication_topology(struct ILUFact *ilu) {
             }
         }
     }
+    build_solve_exchange_groups(ilu->lower_rank_topo);
+    build_solve_exchange_groups(ilu->higher_rank_topo);
 }
 
 
@@ -998,38 +1026,54 @@ auto solve_U(struct CSRMatrix &LU, const std::vector<double> &b, int global_offs
 auto share_vector(struct ILUFact *ilu, const std::vector<double> &vec, const CommunicationTopology &topo) {
     std::unordered_map<int, double> external_vec;
     std::vector<MPI_Request> requests;
-    for (const auto &[global_row, src_rank] : topo.glbrow_to_rank_to_recv) {
+    std::unordered_map<int, std::vector<double>> recv_bufs;
+    std::unordered_map<int, std::vector<double>> send_bufs;
+
+    for (const auto &[src_rank, glb_rows] : topo.rank_to_glbrows_recv) {
+        auto &buf = recv_bufs[src_rank];
+        buf.resize(glb_rows.size());
         MPI_Request req;
-        external_vec[global_row] = 0;
         MPI_Irecv(
-            &external_vec[global_row],
-            1,
+            buf.data(),
+            static_cast<int>(buf.size()),
             MPI_DOUBLE,
             src_rank,
-            global_row,
+            solve_vector_tag(ilu->N, src_rank),
             MPI_COMM_WORLD,
             &req
         );
         requests.push_back(req);
     }
-    for (int local_row = 0; local_row < (int)topo.lcrow_to_ranks_to_send.size(); ++local_row) {
-        int global_row = local_row + ilu->global_offset;
-        for (int dest_rank : topo.lcrow_to_ranks_to_send[local_row]) {
-            MPI_Request req;
-            MPI_Isend(
-                vec.data() + local_row,
-                1,
-                MPI_DOUBLE,
-                dest_rank,
-                global_row,
-                MPI_COMM_WORLD,
-                &req
-            );
-            requests.push_back(req);
+
+    for (const auto &[dest_rank, local_rows] : topo.rank_to_localrows_send) {
+        auto &buf = send_bufs[dest_rank];
+        buf.resize(local_rows.size());
+        for (size_t i = 0; i < local_rows.size(); ++i) {
+            buf[i] = vec[local_rows[i]];
+        }
+        MPI_Request req;
+        MPI_Isend(
+            buf.data(),
+            static_cast<int>(buf.size()),
+            MPI_DOUBLE,
+            dest_rank,
+            solve_vector_tag(ilu->N, ilu->rank),
+            MPI_COMM_WORLD,
+            &req
+        );
+        requests.push_back(req);
+    }
+
+    if (!requests.empty()) {
+        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+    }
+
+    for (const auto &[src_rank, glb_rows] : topo.rank_to_glbrows_recv) {
+        const auto &buf = recv_bufs.at(src_rank);
+        for (size_t i = 0; i < glb_rows.size(); ++i) {
+            external_vec[glb_rows[i]] = buf[i];
         }
     }
-    
-    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
     return external_vec;
 }
 
