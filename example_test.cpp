@@ -78,6 +78,11 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     int world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    double start_time = MPI_Wtime();
+
+
     int first_row = test_rank_first_row(rank, N, world_size);
     int last_row = test_rank_first_row(rank + 1, N, world_size);
     int n_local_rows = last_row - first_row;
@@ -103,7 +108,13 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     // }
 
     ILU_multiply(ilu, x, res);
-
+    
+    MPI_Barrier(MPI_COMM_WORLD);
+    double end_time = MPI_Wtime();
+    double local_time = end_time - start_time;
+    if (rank == 0) {
+        printf("RESULT: %f\n", local_time);
+    }
 
     // print_vectors(v_part, res, n_local_rows, rank, world_size);
     for (int i = first_row; i < last_row; i++)
@@ -170,7 +181,7 @@ int main(int argc, char* argv[])
         v2[i] = i;
     }
 
-    test_vector(ilu, N, v1);
+    // test_vector(ilu, N, v1);
     test_vector(ilu, N, v2);
 
     ILU_free(ilu);
