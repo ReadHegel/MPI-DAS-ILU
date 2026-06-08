@@ -9,13 +9,6 @@
 
 set -e
 
-# Sprawdzenie czy podano program
-if [ -z "$COMMAND" ]; then
-    echo "Błąd: Nie podano komendy do uruchomienia!"
-    echo "Użycie: sbatch submit_profile.sh <program> [argumenty]"
-    exit 1
-fi
-
 echo "=== Rozpoczęcie zadania SLURM ID: $SLURM_JOB_ID ==="
 echo "Data rozpoczęcia: $(date)"
 
