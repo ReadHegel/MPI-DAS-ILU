@@ -234,7 +234,7 @@ namespace {
 namespace utils {
 
 void print_local_dense(const struct ILUFact *ilu) {
-    const int precision = 3;
+    const int precision = 2;
     const int width = 5;
     MPI_Barrier(MPI_COMM_WORLD);
     for (int p = 0; p < ilu->world_size; ++p) {
@@ -879,6 +879,10 @@ bool ILU_row_with_externals(struct ILUFact *ilu, int row_local, int first_idx) {
             a_kk_idx = std::distance(other_cols.begin(), it);
         }
         else {
+            // Print row
+            for (int i = 0; i < other_cols.size(); ++i) {
+                std::cout << col << " " << other_cols[i] << " " << other_vals[i] << std::endl;
+            }
             throw std::runtime_error(
                 "Expected to find diagonal element in received row"
             );
