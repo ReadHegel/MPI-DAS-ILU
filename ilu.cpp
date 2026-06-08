@@ -1323,7 +1323,11 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
 
     share_dependencies(ilu);
 
+    utils::print_local_dense(ilu);
+
     backup_separator_rows(ilu);
+
+    utils::print_local_dense(ilu);
 
     factorize_interior_block(ilu);
     exchange_interior_rows(ilu);
