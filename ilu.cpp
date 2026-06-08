@@ -7,6 +7,7 @@
 #include <mpi.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -192,6 +193,7 @@ struct ILUFact {
 
     std::vector<std::vector<RowElem>> recv_row_buffers;
     std::vector<MPI_Request> active_recv_requests;
+    std::vector<bool> is_request_ready;
     std::vector<int> request_to_row_idx;
     std::unordered_map<int, int>
         row_idx_to_request_idx;  // global row -> request idx in
@@ -541,6 +543,23 @@ void share_permutation(struct ILUFact *ilu) {
 // ========= Communication functions =========
 //
 
+const MPI_Datatype &row_elem_mpi_type() {
+    static MPI_Datatype type = MPI_DATATYPE_NULL;
+    if (type == MPI_DATATYPE_NULL) {
+        int count = 2;
+        int blocklengths[2] = {1, 1};
+        MPI_Datatype types[2] = {MPI_INT, MPI_DOUBLE};
+        MPI_Aint displacements[2];
+        displacements[0] = offsetof(RowElem, col);
+        displacements[1] = offsetof(RowElem, val);
+        MPI_Type_create_struct(
+            count, blocklengths, displacements, types, &type
+        );
+        MPI_Type_commit(&type);
+    }
+    return type;
+}
+
 void post_row_irecv(struct ILUFact *ilu, int global_row, int src_rank, int nnz); // TODO remove
 
 auto calculate_needed_rows_from_other_ranks(struct ILUFact *ilu) {
@@ -740,13 +759,14 @@ void share_dependencies(struct ILUFact *ilu) {
 }
 
 void post_row_irecv(struct ILUFact *ilu, int global_row, int src_rank, int nnz) {
+    static const MPI_Datatype &row_mpi_type = row_elem_mpi_type();
     ilu->recv_row_buffers.emplace_back(nnz);
 
     MPI_Request req;
     MPI_Irecv(
         ilu->recv_row_buffers.back().data(),
-        nnz * sizeof(RowElem),
-        MPI_BYTE,
+        nnz,
+        row_mpi_type,
         src_rank,
         global_row,
         MPI_COMM_WORLD,
@@ -754,6 +774,7 @@ void post_row_irecv(struct ILUFact *ilu, int global_row, int src_rank, int nnz) 
     );
 
     ilu->active_recv_requests.push_back(req);
+    ilu->is_request_ready.push_back(false);
     ilu->request_to_row_idx.push_back(global_row);
     ilu->row_idx_to_request_idx[global_row] =
         ilu->active_recv_requests.size() - 1;
@@ -762,6 +783,7 @@ void post_row_irecv(struct ILUFact *ilu, int global_row, int src_rank, int nnz) 
 void broadcast_new_rows(
     struct ILUFact *ilu, const std::vector<int> &new_ready_rows_loc
 ) {
+    static const MPI_Datatype &row_mpi_type = row_elem_mpi_type();
     for (auto &local_row : new_ready_rows_loc) {
         int global_row = local_row + ilu->global_offset;
         int nnz = ilu->LU.nnz_in_local_row(local_row);
@@ -786,8 +808,8 @@ void broadcast_new_rows(
         for (int rank : ilu->lower_rank_topo.lcrow_to_ranks_to_send[local_row]) {
             MPI_Send(
                 data_to_send.data(),
-                nnz * sizeof(RowElem),
-                MPI_BYTE,
+                nnz,
+                row_mpi_type,
                 rank,
                 global_row,
                 MPI_COMM_WORLD
@@ -827,9 +849,15 @@ void ILU(
     }
 }
 
-bool ILU_row_with_externals(struct ILUFact *ilu, int row_local, int first_idx) {
+bool ILU_row_with_externals(struct ILUFact *ilu, int row_local) {
     auto &LU = ilu->LU;
-    auto &idx = ilu->first_col_in_separator_idx[row_local - ilu->num_interior];
+    int sep_idx = row_local - ilu->num_interior;
+    auto &idx = ilu->first_col_in_separator_idx[sep_idx];
+    int first_col = LU.col_idx[idx];
+
+    if (ilu->is_separator_ready[sep_idx]) {
+        return false;
+    }
 
     for (; idx < ilu->LU.row_ptr[row_local + 1]; ++idx) {
         int col = LU.col_idx[idx];
@@ -857,8 +885,7 @@ bool ILU_row_with_externals(struct ILUFact *ilu, int row_local, int first_idx) {
                     << " buf_sz=" << (req_idx>=0 ? ilu->recv_row_buffers[req_idx].size() : -1)
                     << " global_row_recv=" << (req_idx>=0 ? ilu->request_to_row_idx[req_idx] : -1)
                     << std::endl;
-            if (ilu->active_recv_requests[req_idx] ==
-                MPI_REQUEST_NULL) {
+            if (req_idx >= 0 && ilu->is_request_ready[req_idx]) {
                 auto &received_row =
                     ilu->recv_row_buffers[req_idx];
                 std::tie(other_cols, other_vals) = RowElem::unpack(received_row);
@@ -917,29 +944,16 @@ bool ILU_row_with_externals(struct ILUFact *ilu, int row_local, int first_idx) {
     return true;
 }
 
-std::vector<int> incorporate_received_row(
-    struct ILUFact *ilu, int request_idx
-) {
-    int global_row = ilu->request_to_row_idx[request_idx];
-
-    std::vector<int> ready_rows_loc;
-
-    for (int local_row_sep = ilu->num_interior;
-         local_row_sep < ilu->num_rows_local;
-         ++local_row_sep) {
-        auto first_col_in_separator_idx =
-            ilu->first_col_in_separator_idx[local_row_sep - ilu->num_interior];
-        if (ilu->LU.col_idx[first_col_in_separator_idx] == global_row) {
-            if (ILU_row_with_externals(
-                    ilu, local_row_sep, first_col_in_separator_idx
-                )) {
-                ready_rows_loc.push_back(local_row_sep);
-                ilu->is_separator_ready[local_row_sep - ilu->num_interior] = true;
-            }
+std::vector<int> advance_local_separators(ILUFact *ilu) {
+    std::vector<int> newly_ready;
+    for (int sep = ilu->num_interior; sep < ilu->num_rows_local; ++sep) {
+        int sep_idx = sep - ilu->num_interior;
+        if (ILU_row_with_externals(ilu, sep)) {
+            ilu->is_separator_ready[sep_idx] = true;
+            newly_ready.push_back(sep);
         }
     }
-
-    return ready_rows_loc;
+    return newly_ready;
 }
 
 //
@@ -1126,6 +1140,7 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
 
     utils::print_local_dense(ilu);
     share_dependencies(ilu);  // TODO uwspółbierznić
+    
     ILU(ilu->LU, ilu->global_offset, ilu->num_interior);
 
     std::vector<int> interior_nodes(ilu->num_interior);
@@ -1140,12 +1155,16 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
             &indx,
             MPI_STATUS_IGNORE
         );
+        ilu->is_request_ready[indx] = true;
         ilu->count_active_requests--;
 
-        auto new_ready_rows_loc = incorporate_received_row(ilu, indx);
-        if (!new_ready_rows_loc.empty()) {
-            broadcast_new_rows(ilu, new_ready_rows_loc);
-        }
+        std::vector<int> new_ready_rows_loc;
+        do {
+            new_ready_rows_loc = advance_local_separators(ilu);
+            if (!new_ready_rows_loc.empty()) {
+                broadcast_new_rows(ilu, new_ready_rows_loc);
+            }
+        } while(!new_ready_rows_loc.empty());
     }
 
     //utils::print_local_dense(ilu);
