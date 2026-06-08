@@ -5,10 +5,14 @@
 #SBATCH --time=00:07:00
 #SBATCH --output=scaling_%j.out
 
-MATRIX=matrices/cage12.mtx
+MATRIX=matrices/cage11.mtx
 echo "p,time" > results.csv
 
 for p in 1 2 4 8 12 24 48 96
 do
-    srun -n $p ./example_test $MATRIX | awk -v p=$p '/^RESULT:/ {print p "," $2}' >> results.csv
+    echo "=== Uruchamianie dla p=$p ==="
+    srun -n $p ./example_test $MATRIX | awk -v p=$p '{
+        print $0; 
+        if (/^RESULT:/) print p "," $2 >> "results.csv"
+    }'
 done
