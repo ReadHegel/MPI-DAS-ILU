@@ -72,7 +72,7 @@ void print_vectors(double* v_part, double* res, int n_local_rows, int rank, int 
     }
 }
 
-bool test_vector(struct ILUFact* ilu, int N, double* v)
+bool test_vector(struct ILUFact* ilu, int N, double* v, double start_time)
 {
     int rank;
     int world_size;
@@ -93,6 +93,13 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     double* x = (double*) malloc(n_local_rows * sizeof(double));
     double* res = (double*) malloc(n_local_rows * sizeof(double));
     ILU_solve(ilu, v_part, x);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    double end_time = MPI_Wtime();
+    double local_time = end_time - start_time;
+    if (rank == 0) {
+        printf("Time after solve: %f\n", local_time);
+    }
 
     // print vector x
     // for (int r = 0; r < world_size; r++) {
@@ -180,8 +187,13 @@ int main(int argc, char* argv[])
         v2[i] = i;
     }
 
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (rank == 0) {
+        printf("Time after factorization: %f\n", MPI_Wtime() - start_time);
+    }
+
     // test_vector(ilu, N, v1);
-    test_vector(ilu, N, v2);
+    test_vector(ilu, N, v2, start_time);
 
     MPI_Barrier(MPI_COMM_WORLD);
     double end_time = MPI_Wtime();
