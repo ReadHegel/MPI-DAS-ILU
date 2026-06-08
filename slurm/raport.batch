@@ -1,21 +1,64 @@
 #!/bin/bash -l
-#SBATCH --job-name DAS-ILU          # this will be shown in the queueing system
-#SBATCH --output "logs/DAS-ILU-%j.out"   # stdout redirection
-#SBATCH --error "logs/DAS-ILU-%j.err"    # stderr redirection
-#SBATCH --account "g105-2692"         # the number of our grant
-#SBATCH --nodes 1                    # how many nodes we want
-#SBATCH --tasks-per-node 4        # each node is 2 socket, 12 core, so we want 24 tasks on each node
-#SBATCH --time 00:01:20               # if the job runs longer than this, it'll be killed
+#SBATCH --job-name DAS-ILU-profile
+#SBATCH --output  "logs/DAS-ILU-%j.out"
+#SBATCH --error   "logs/DAS-ILU-%j.err"
+#SBATCH --account "g105-2692"
+#SBATCH --nodes 2
+#SBATCH --tasks-per-node 12
+#SBATCH --time 00:05:00
+ 
+# ─── Paths (hardcoded) ────────────────────────────────────────────────────────
+WORK_DIR="/home/${USER}/das-ilu"          # <-- zmień na swój katalog roboczy
+BINARY="example_test"
+MATRIX="matrices/cage5.mtx"
+REPORT_DIR="${WORK_DIR}/reports"
+ 
+# ─── Setup ────────────────────────────────────────────────────────────────────
+mkdir -p "${REPORT_DIR}" "${WORK_DIR}/logs"
+cd "${WORK_DIR}" || { echo "ERROR: Cannot cd to ${WORK_DIR}"; exit 1; }
+ 
+# ─── Load CrayPat ─────────────────────────────────────────────────────────────
+# module load perftools-lite
+ 
+# ─── Build ────────────────────────────────────────────────────────────────────
+echo "=== Building ==="
+make clean
+make
+ 
+if [ ! -f "${BINARY}" ]; then
+    echo "ERROR: Binary '${BINARY}' not found after make. Aborting."
+    exit 1
+fi
+ 
+# ─── Run instrumented binary ──────────────────────────────────────────────────
+echo "=== Running instrumented binary ==="
+srun --label "${WORK_DIR}/${BINARY}" "${WORK_DIR}/${MATRIX}"
+ 
+# ─── Find the generated profiling directory ───────────────────────────────────
+PROFILE_DIR=$(ls -d "${WORK_DIR}/${BINARY}"+[0-9]* 2>/dev/null | sort -t+ -k2 -n | tail -1)
+ 
+if [ -z "${PROFILE_DIR}" ]; then
+    echo "ERROR: No CrayPat directory found (${BINARY}+XXXXXX). Was perftools-lite loaded before build?"
+    exit 1
+fi
+ 
+echo "=== Found profiling directory: ${PROFILE_DIR} ==="
+ 
+# ─── Generate report ──────────────────────────────────────────────────────────
+REPORT_FILE="${REPORT_DIR}/das-ilu-trace-report_${SLURM_JOB_ID}.txt"
+ 
+echo "=== Generating pat_report ==="
+pat_report -o "${REPORT_FILE}" "${PROFILE_DIR}"
+ 
+# ─── Summary ──────────────────────────────────────────────────────────────────
+echo ""
+echo "===================================================================="
+echo "  Profiling complete."
+echo "  Profile data : ${PROFILE_DIR}"
+echo "  Text report  : ${REPORT_FILE}"
+echo ""
+echo "  Graphical viewer (wymaga ssh -Y):"
+echo "    app2 ${PROFILE_DIR}/index.ap2"
+echo "===================================================================="
+ 
 
-set -e
-
-module load perftools-base
-module load perftools-lite
-
-export PAT_RT_EXPDIR="./fw_profile_data"
-
-rm -rf ./fw_profile_data
-
-srun ./example_test matrices/cage3.mtx
-
-pat_report -o fw-trace-report.txt ./fw_profile_data
