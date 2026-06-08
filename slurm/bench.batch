@@ -5,7 +5,7 @@
 #SBATCH --time=00:07:00
 #SBATCH --output=scaling_%j.out
 
-MATRIX=matrices/cage14.mtx
+MATRIX=matrices/cage13.mtx
 echo "p,time" > results.csv
 
 for p in 1 2 4 8 12 24 48 96
