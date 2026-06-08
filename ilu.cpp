@@ -1099,10 +1099,10 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     MPI_Comm_size(MPI_COMM_WORLD, &ilu->world_size);
     
     distribute_data(N, nnz, row, col, val, ilu);
-    utils::print_local_dense(ilu);
+    //utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
     share_permutation(ilu);
-    utils::permutation::permute_columns(ilu->LU, ilu->global_perm);
+    //utils::permutation::permute_columns(ilu->LU, ilu->global_perm);
 
 
     share_dependencies(ilu);  // TODO uwspółbierznić
@@ -1132,8 +1132,6 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
 
     return ilu;
 }
-
-
 
 void ILU_solve(struct ILUFact *ilu, const double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
