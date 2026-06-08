@@ -2,7 +2,7 @@
 #SBATCH --nodes=4
 #SBATCH --ntasks-per-node=24
 #SBATCH --account "g105-2692"   
-#SBATCH --time=00:30:00
+#SBATCH --time=00:05:00
 #SBATCH --output=scaling_%j.out
 
 MATRIX=matrices/cage6.mtx
