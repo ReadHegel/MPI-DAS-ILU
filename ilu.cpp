@@ -1009,21 +1009,25 @@ bool check_factorization_converged(ILUFact *ilu, const std::vector<double> &prev
 
 bool run_separator_sweep(ILUFact *ilu, std::vector<double> &prev_vals) {
     receive_external_rows(ilu);
-    restore_separator_rows(ilu);
-    factorize_separator_block(ilu);
-    send_separator_rows(ilu);
+    if (ilu->num_separator > 0) {
+        restore_separator_rows(ilu);
+        factorize_separator_block(ilu);
+        send_separator_rows(ilu);
+    }
 
     bool converged = check_factorization_converged(ilu, prev_vals, FACTORIZE_EPS);
-    snapshot_separator_vals(ilu, prev_vals);
+    if (ilu->num_separator > 0) {
+        snapshot_separator_vals(ilu, prev_vals);
+    }
     return converged;
 }
 
 void factorize_separators_sweeps(ILUFact *ilu) {
-    if (ilu->num_separator == 0) {
-        return;
+    if (ilu->num_separator > 0) {
+        snapshot_separator_vals(ilu, ilu->separator_vals_prev);
+    } else {
+        ilu->separator_vals_prev.clear();
     }
-
-    snapshot_separator_vals(ilu, ilu->separator_vals_prev);
 
     bool converged = false;
     int sweep = 0;
@@ -1156,17 +1160,16 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
             break;
     }
 
-    std::vector<double> external_vec;
-    bool converged = false;
-    bool all_converged = false;
+    int converged = 1;
+    int all_converged = 0;
 
-    do { 
+    do {
         auto external_vec = share_vector(
             ilu,
             y,
             solve_type == SolveType::L ? ilu->lower_rank_topo : ilu->higher_rank_topo
         );
- 
+
         std::vector<double> Ey_ext(ilu->num_rows_local, 0);
         for (int loc_row = 0; loc_row < ilu->num_rows_local; ++loc_row) {
             for (int idx = ilu->LU.row_ptr[loc_row]; idx < ilu->LU.row_ptr[loc_row + 1]; ++idx) {
@@ -1184,7 +1187,7 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
             }
         }
 
-        for (int i = 0; i < Ey_ext.size(); ++i) {
+        for (int i = 0; i < (int)Ey_ext.size(); ++i) {
             Ey_ext[i] = b[i] - Ey_ext[i];
         }
 
@@ -1198,19 +1201,17 @@ auto dist_async_solve(struct ILUFact *ilu, const std::vector<double> &b, SolveTy
                 break;
         }
 
-        converged = true;
-        double max_diff = 0.0;
-        for (int i = 0; i < y_new.size(); ++i) {
-            max_diff = std::max(max_diff, std::abs(y_new[i] - y[i]));
+        converged = 1;
+        for (int i = 0; i < (int)y_new.size(); ++i) {
             if (std::abs(y_new[i] - y[i]) > EPS) {
-                converged = false;
-                
+                converged = 0;
+                break;
             }
         }
 
         y = y_new;
     } while (
-        MPI_Allreduce(&converged, &all_converged, 1, MPI_C_BOOL, MPI_LAND, MPI_COMM_WORLD), 
+        MPI_Allreduce(&converged, &all_converged, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD),
         !all_converged
     );
 
