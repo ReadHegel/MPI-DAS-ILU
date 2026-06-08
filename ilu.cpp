@@ -136,6 +136,13 @@ struct CommunicationTopology {
     // packed solve exchange: one MPI message per neighbor rank
     std::unordered_map<int, std::vector<int>> rank_to_glbrows_recv;
     std::unordered_map<int, std::vector<int>> rank_to_localrows_send;
+    // packed factorize exchange: one MPI message per neighbor rank
+    std::unordered_map<int, std::vector<int>> rank_to_interior_glbrows_recv;
+    std::unordered_map<int, std::vector<int>> rank_to_interior_localrows_send;
+    std::unordered_map<int, int> rank_to_interior_recv_elem_count;
+    std::unordered_map<int, std::vector<int>> rank_to_separator_glbrows_recv;
+    std::unordered_map<int, std::vector<int>> rank_to_separator_localrows_send;
+    std::unordered_map<int, int> rank_to_separator_recv_elem_count;
 };
 
 struct RowElem {
@@ -729,6 +736,79 @@ void build_solve_exchange_groups(CommunicationTopology &topo) {
 
 int solve_vector_tag(int N, int sender_rank) { return N + 1000 + sender_rank; }
 
+int factorize_row_tag(int N, int sender_rank) { return N + 2000 + sender_rank; }
+
+void build_packed_recv_groups(
+    const std::unordered_map<int, int> &glbrow_to_rank,
+    const std::unordered_map<int, int> &glbrow_nnz,
+    std::unordered_map<int, std::vector<int>> &rank_to_glbrows,
+    std::unordered_map<int, int> &rank_to_elem_count
+) {
+    rank_to_glbrows.clear();
+    rank_to_elem_count.clear();
+
+    for (const auto &[global_row, src_rank] : glbrow_to_rank) {
+        rank_to_glbrows[src_rank].push_back(global_row);
+    }
+    for (auto &[rank, rows] : rank_to_glbrows) {
+        std::sort(rows.begin(), rows.end());
+        int count = 0;
+        for (int global_row : rows) {
+            count += glbrow_nnz.at(global_row);
+        }
+        rank_to_elem_count[rank] = count;
+    }
+}
+
+void build_packed_send_groups(
+    const CommunicationTopology &topo,
+    int row_begin,
+    int row_end,
+    std::unordered_map<int, std::vector<int>> &rank_to_localrows
+) {
+    rank_to_localrows.clear();
+
+    for (int local_row = row_begin; local_row < row_end; ++local_row) {
+        if (local_row >= (int)topo.lcrow_to_ranks_to_send.size()) {
+            continue;
+        }
+        for (int dest_rank : topo.lcrow_to_ranks_to_send[local_row]) {
+            rank_to_localrows[dest_rank].push_back(local_row);
+        }
+    }
+    for (auto &[rank, rows] : rank_to_localrows) {
+        std::sort(rows.begin(), rows.end());
+        rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+    }
+}
+
+void build_packed_factorize_groups(ILUFact *ilu, CommunicationTopology &topo) {
+    build_packed_recv_groups(
+        topo.glbrow_interior_recv,
+        topo.glbrow_interior_nnz,
+        topo.rank_to_interior_glbrows_recv,
+        topo.rank_to_interior_recv_elem_count
+    );
+    build_packed_recv_groups(
+        topo.glbrow_separator_recv,
+        topo.glbrow_separator_nnz,
+        topo.rank_to_separator_glbrows_recv,
+        topo.rank_to_separator_recv_elem_count
+    );
+    build_packed_send_groups(
+        topo,
+        0,
+        ilu->num_interior,
+        topo.rank_to_interior_localrows_send
+    );
+    build_packed_send_groups(
+        topo,
+        ilu->num_interior,
+        ilu->num_rows_local,
+        topo.rank_to_separator_localrows_send
+    );
+}
+
 void split_recv_maps_by_row_type(ILUFact *ilu, CommunicationTopology &topo) {
     topo.glbrow_interior_recv.clear();
     topo.glbrow_interior_nnz.clear();
@@ -796,6 +876,7 @@ void setup_communication_topology(struct ILUFact *ilu) {
     split_recv_maps_by_row_type(ilu, ilu->higher_rank_topo);
     build_solve_exchange_groups(ilu->lower_rank_topo);
     build_solve_exchange_groups(ilu->higher_rank_topo);
+    build_packed_factorize_groups(ilu, ilu->lower_rank_topo);
 }
 
 
@@ -857,65 +938,76 @@ struct RowSendRequests {
     std::vector<MPI_Request> requests;
 };
 
-RowSendRequests send_factorized_rows_async(
-    ILUFact *ilu, const std::vector<int> &local_rows
+struct RowRecvPending {
+    std::unordered_map<int, std::vector<RowElem>> buffers;
+    std::vector<MPI_Request> requests;
+    const std::unordered_map<int, std::vector<int>> *glbrows_by_src = nullptr;
+    const std::unordered_map<int, int> *nnz_by_glbrow = nullptr;
+};
+
+RowSendRequests send_packed_rows_async(
+    ILUFact *ilu,
+    const std::unordered_map<int, std::vector<int>> &localrows_by_dest
 ) {
     static const MPI_Datatype &row_mpi_type = row_elem_mpi_type();
     RowSendRequests pending;
 
-    for (int local_row : local_rows) {
-        int global_row = local_row + ilu->global_offset;
-        int nnz = ilu->LU.nnz_in_local_row(local_row);
-        std::vector<RowElem> data_to_send(nnz);
-
-        for (int i = ilu->LU.row_ptr[local_row];
-             i < ilu->LU.row_ptr[local_row + 1];
-             ++i) {
-            data_to_send[i - ilu->LU.row_ptr[local_row]] = {
-                ilu->LU.col_idx[i], ilu->LU.val[i]
-            };
+    for (const auto &[dest_rank, local_rows] : localrows_by_dest) {
+        std::vector<RowElem> buf;
+        for (int local_row : local_rows) {
+            for (int i = ilu->LU.row_ptr[local_row];
+                 i < ilu->LU.row_ptr[local_row + 1];
+                 ++i) {
+                buf.push_back({ilu->LU.col_idx[i], ilu->LU.val[i]});
+            }
+        }
+        if (buf.empty()) {
+            continue;
         }
 
-        for (int rank : ilu->lower_rank_topo.lcrow_to_ranks_to_send[local_row]) {
-            pending.buffers.push_back(data_to_send);
-            MPI_Request req;
-            MPI_Isend(
-                pending.buffers.back().data(),
-                nnz,
-                row_mpi_type,
-                rank,
-                global_row,
-                MPI_COMM_WORLD,
-                &req
-            );
-            pending.requests.push_back(req);
-        }
+        pending.buffers.push_back(std::move(buf));
+        MPI_Request req;
+        MPI_Isend(
+            pending.buffers.back().data(),
+            static_cast<int>(pending.buffers.back().size()),
+            row_mpi_type,
+            dest_rank,
+            factorize_row_tag(ilu->N, ilu->rank),
+            MPI_COMM_WORLD,
+            &req
+        );
+        pending.requests.push_back(req);
     }
     return pending;
 }
 
-std::vector<MPI_Request> receive_rows_from_map_async(
+RowRecvPending start_receive_packed_rows(
     ILUFact *ilu,
-    const std::unordered_map<int, int> &glbrow_to_rank,
-    const std::unordered_map<int, int> &glbrow_nnz
+    const std::unordered_map<int, std::vector<int>> &glbrows_by_src,
+    const std::unordered_map<int, int> &recv_elem_count,
+    const std::unordered_map<int, int> &nnz_by_glbrow
 ) {
     static const MPI_Datatype &row_mpi_type = row_elem_mpi_type();
-    std::vector<MPI_Request> requests;
+    RowRecvPending pending;
+    pending.glbrows_by_src = &glbrows_by_src;
+    pending.nnz_by_glbrow = &nnz_by_glbrow;
 
-    for (const auto &[global_row, src_rank] : glbrow_to_rank) {
+    for (const auto &[src_rank, glb_rows] : glbrows_by_src) {
+        auto &buf = pending.buffers[src_rank];
+        buf.resize(recv_elem_count.at(src_rank));
         MPI_Request req;
         MPI_Irecv(
-            ilu->external_row_cache[global_row].data(),
-            glbrow_nnz.at(global_row),
+            buf.data(),
+            static_cast<int>(buf.size()),
             row_mpi_type,
             src_rank,
-            global_row,
+            factorize_row_tag(ilu->N, src_rank),
             MPI_COMM_WORLD,
             &req
         );
-        requests.push_back(req);
+        pending.requests.push_back(req);
     }
-    return requests;
+    return pending;
 }
 
 void wait_mpi_requests(std::vector<MPI_Request> &requests) {
@@ -928,49 +1020,60 @@ void wait_mpi_requests(std::vector<MPI_Request> &requests) {
     }
 }
 
-std::vector<MPI_Request> receive_interior_rows_once(ILUFact *ilu) {
-    auto &topo = ilu->lower_rank_topo;
-    return receive_rows_from_map_async(
-        ilu, topo.glbrow_interior_recv, topo.glbrow_interior_nnz
-    );
-}
+void finish_row_recv_pending(RowRecvPending &pending, ILUFact *ilu) {
+    wait_mpi_requests(pending.requests);
 
-std::vector<MPI_Request> receive_separator_rows(ILUFact *ilu) {
-    auto &topo = ilu->lower_rank_topo;
-    return receive_rows_from_map_async(
-        ilu, topo.glbrow_separator_recv, topo.glbrow_separator_nnz
-    );
-}
-
-RowSendRequests send_rows_in_range_async(
-    ILUFact *ilu, int row_begin, int row_end
-) {
-    std::vector<int> rows_to_send;
-    rows_to_send.reserve(ilu->num_rows_local);
-    for (int local_row = row_begin; local_row < row_end; ++local_row) {
-        if (!ilu->lower_rank_topo.lcrow_to_ranks_to_send[local_row].empty()) {
-            rows_to_send.push_back(local_row);
+    for (const auto &[src_rank, glb_rows] : *pending.glbrows_by_src) {
+        const auto &buf = pending.buffers.at(src_rank);
+        size_t offset = 0;
+        for (int global_row : glb_rows) {
+            int nnz = pending.nnz_by_glbrow->at(global_row);
+            auto &cache_row = ilu->external_row_cache.at(global_row);
+            for (int k = 0; k < nnz; ++k) {
+                cache_row[k] = buf[offset + k];
+            }
+            offset += nnz;
         }
     }
-    if (rows_to_send.empty()) {
-        return {};
-    }
-    return send_factorized_rows_async(ilu, rows_to_send);
+}
+
+RowRecvPending receive_interior_rows_once(ILUFact *ilu) {
+    auto &topo = ilu->lower_rank_topo;
+    return start_receive_packed_rows(
+        ilu,
+        topo.rank_to_interior_glbrows_recv,
+        topo.rank_to_interior_recv_elem_count,
+        topo.glbrow_interior_nnz
+    );
+}
+
+RowRecvPending receive_separator_rows(ILUFact *ilu) {
+    auto &topo = ilu->lower_rank_topo;
+    return start_receive_packed_rows(
+        ilu,
+        topo.rank_to_separator_glbrows_recv,
+        topo.rank_to_separator_recv_elem_count,
+        topo.glbrow_separator_nnz
+    );
 }
 
 RowSendRequests send_interior_rows(ILUFact *ilu) {
-    return send_rows_in_range_async(ilu, 0, ilu->num_interior);
+    return send_packed_rows_async(
+        ilu, ilu->lower_rank_topo.rank_to_interior_localrows_send
+    );
 }
 
 RowSendRequests send_separator_rows(ILUFact *ilu) {
-    return send_rows_in_range_async(ilu, ilu->num_interior, ilu->num_rows_local);
+    return send_packed_rows_async(
+        ilu, ilu->lower_rank_topo.rank_to_separator_localrows_send
+    );
 }
 
 void exchange_interior_rows(ILUFact *ilu) {
-    auto recv_requests = receive_interior_rows_once(ilu);
+    auto recv_pending = receive_interior_rows_once(ilu);
     auto send_pending = send_interior_rows(ilu);
 
-    wait_mpi_requests(recv_requests);
+    finish_row_recv_pending(recv_pending, ilu);
     wait_mpi_requests(send_pending.requests);
 }
 
@@ -1121,10 +1224,10 @@ bool check_factorization_converged(
 bool run_separator_sweep(
     ILUFact *ilu, std::vector<double> &prev_vals, int sweep, MPI_Comm sep_comm
 ) {
-    auto recv_requests = receive_separator_rows(ilu);
+    auto recv_pending = receive_separator_rows(ilu);
     auto send_pending = send_separator_rows(ilu);
 
-    wait_mpi_requests(recv_requests);
+    finish_row_recv_pending(recv_pending, ilu);
     restore_separator_rows(ilu);
     factorize_separator_block(ilu);
     wait_mpi_requests(send_pending.requests);
