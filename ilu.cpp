@@ -841,10 +841,18 @@ bool ILU_row_with_externals(struct ILUFact *ilu, int row_local, int first_idx) {
         std::vector<double> other_vals;
 
         if (col < ilu->global_offset) {
-            if (ilu->active_recv_requests[ilu->row_idx_to_request_idx[col]] ==
+            int req_idx = ilu->row_idx_to_request_idx.count(col) 
+                ? ilu->row_idx_to_request_idx.at(col) : -1;
+            std::cout << "rank=" << ilu->rank 
+                    << " pivot=" << col
+                    << " req_idx=" << req_idx
+                    << " buf_sz=" << (req_idx>=0 ? ilu->recv_row_buffers[req_idx].size() : -1)
+                    << " global_row_recv=" << (req_idx>=0 ? ilu->request_to_row_idx[req_idx] : -1)
+                    << std::endl;
+            if (ilu->active_recv_requests[req_idx] ==
                 MPI_REQUEST_NULL) {
                 auto &received_row =
-                    ilu->recv_row_buffers[ilu->row_idx_to_request_idx[col]];
+                    ilu->recv_row_buffers[req_idx];
                 std::tie(other_cols, other_vals) = RowElem::unpack(received_row);
             }
             else {
