@@ -128,6 +128,11 @@ struct CommunicationTopology {
     // global_row -> rank from which I need to receive the row
     std::unordered_map<int, int> glbrow_to_rank_to_recv;
     std::unordered_map<int, int> glbrow_row_nnz_to_recv;
+    // factorization: interior rows received once; separator rows each sweep
+    std::unordered_map<int, int> glbrow_interior_recv;
+    std::unordered_map<int, int> glbrow_interior_nnz;
+    std::unordered_map<int, int> glbrow_separator_recv;
+    std::unordered_map<int, int> glbrow_separator_nnz;
     // packed solve exchange: one MPI message per neighbor rank
     std::unordered_map<int, std::vector<int>> rank_to_glbrows_recv;
     std::unordered_map<int, std::vector<int>> rank_to_localrows_send;
@@ -196,6 +201,7 @@ struct ILUFact {
     CommunicationTopology higher_rank_topo;
     std::vector<int> first_row_in_rank;
     std::vector<int> num_rows_in_rank;
+    std::vector<int> num_interior_in_rank;
 
     int glob_to_loc_row(int global_row) const {
         return global_row - global_offset;
@@ -723,7 +729,37 @@ void build_solve_exchange_groups(CommunicationTopology &topo) {
 
 int solve_vector_tag(int N, int sender_rank) { return N + 1000 + sender_rank; }
 
+void split_recv_maps_by_row_type(ILUFact *ilu, CommunicationTopology &topo) {
+    topo.glbrow_interior_recv.clear();
+    topo.glbrow_interior_nnz.clear();
+    topo.glbrow_separator_recv.clear();
+    topo.glbrow_separator_nnz.clear();
+
+    for (const auto &[global_row, src_rank] : topo.glbrow_to_rank_to_recv) {
+        int local_on_src = global_row - ilu->first_row_in_rank[src_rank];
+        int nnz = topo.glbrow_row_nnz_to_recv.at(global_row);
+        if (local_on_src < ilu->num_interior_in_rank[src_rank]) {
+            topo.glbrow_interior_recv[global_row] = src_rank;
+            topo.glbrow_interior_nnz[global_row] = nnz;
+        } else {
+            topo.glbrow_separator_recv[global_row] = src_rank;
+            topo.glbrow_separator_nnz[global_row] = nnz;
+        }
+    }
+}
+
 void setup_communication_topology(struct ILUFact *ilu) {
+    ilu->num_interior_in_rank.resize(ilu->world_size);
+    MPI_Allgather(
+        &ilu->num_interior,
+        1,
+        MPI_INT,
+        ilu->num_interior_in_rank.data(),
+        1,
+        MPI_INT,
+        MPI_COMM_WORLD
+    );
+
     // Calculate my dependencies
     auto needed_rows_from_rank = calculate_needed_rows_from_other_ranks(ilu);
     auto [requests_count_to_send, requests_count_to_recv] = share_needed_rows_nnz(ilu, needed_rows_from_rank);
@@ -756,6 +792,8 @@ void setup_communication_topology(struct ILUFact *ilu) {
             }
         }
     }
+    split_recv_maps_by_row_type(ilu, ilu->lower_rank_topo);
+    split_recv_maps_by_row_type(ilu, ilu->higher_rank_topo);
     build_solve_exchange_groups(ilu->lower_rank_topo);
     build_solve_exchange_groups(ilu->higher_rank_topo);
 }
@@ -842,14 +880,17 @@ void send_factorized_rows(ILUFact *ilu, const std::vector<int> &local_rows) {
     }
 }
 
-void receive_external_rows(ILUFact *ilu) {
+void receive_rows_from_map(
+    ILUFact *ilu,
+    const std::unordered_map<int, int> &glbrow_to_rank,
+    const std::unordered_map<int, int> &glbrow_nnz
+) {
     static const MPI_Datatype &row_mpi_type = row_elem_mpi_type();
-    auto &topo = ilu->lower_rank_topo;
 
-    for (const auto &[global_row, src_rank] : topo.glbrow_to_rank_to_recv) {
+    for (const auto &[global_row, src_rank] : glbrow_to_rank) {
         MPI_Recv(
             ilu->external_row_cache[global_row].data(),
-            topo.glbrow_row_nnz_to_recv.at(global_row),
+            glbrow_nnz.at(global_row),
             row_mpi_type,
             src_rank,
             global_row,
@@ -859,13 +900,44 @@ void receive_external_rows(ILUFact *ilu) {
     }
 }
 
-void send_separator_rows(ILUFact *ilu) {
-    std::vector<int> separator_rows;
-    separator_rows.reserve(ilu->num_separator);
-    for (int row = ilu->num_interior; row < ilu->num_rows_local; ++row) {
-        separator_rows.push_back(row);
+void receive_interior_rows_once(ILUFact *ilu) {
+    auto &topo = ilu->lower_rank_topo;
+    receive_rows_from_map(
+        ilu, topo.glbrow_interior_recv, topo.glbrow_interior_nnz
+    );
+}
+
+void receive_separator_rows(ILUFact *ilu) {
+    auto &topo = ilu->lower_rank_topo;
+    receive_rows_from_map(
+        ilu, topo.glbrow_separator_recv, topo.glbrow_separator_nnz
+    );
+}
+
+void send_rows_in_range(ILUFact *ilu, int row_begin, int row_end) {
+    std::vector<int> rows_to_send;
+    rows_to_send.reserve(ilu->num_rows_local);
+    for (int local_row = row_begin; local_row < row_end; ++local_row) {
+        if (!ilu->lower_rank_topo.lcrow_to_ranks_to_send[local_row].empty()) {
+            rows_to_send.push_back(local_row);
+        }
     }
-    send_factorized_rows(ilu, separator_rows);
+    if (!rows_to_send.empty()) {
+        send_factorized_rows(ilu, rows_to_send);
+    }
+}
+
+void send_interior_rows(ILUFact *ilu) {
+    send_rows_in_range(ilu, 0, ilu->num_interior);
+}
+
+void send_separator_rows(ILUFact *ilu) {
+    send_rows_in_range(ilu, ilu->num_interior, ilu->num_rows_local);
+}
+
+void exchange_interior_rows(ILUFact *ilu) {
+    send_interior_rows(ilu);
+    receive_interior_rows_once(ilu);
 }
 
 //
@@ -1000,45 +1072,58 @@ double max_separator_change(ILUFact *ilu, const std::vector<double> &prev) {
     return max_diff;
 }
 
-bool check_factorization_converged(ILUFact *ilu, const std::vector<double> &prev, double tol) {
+bool check_factorization_converged(
+    ILUFact *ilu,
+    const std::vector<double> &prev,
+    double tol,
+    MPI_Comm sep_comm
+) {
     double local_max = max_separator_change(ilu, prev);
     double global_max = 0.0;
-    MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, sep_comm);
     return global_max < tol;
 }
 
-bool run_separator_sweep(ILUFact *ilu, std::vector<double> &prev_vals) {
-    receive_external_rows(ilu);
-    if (ilu->num_separator > 0) {
-        restore_separator_rows(ilu);
-        factorize_separator_block(ilu);
-        send_separator_rows(ilu);
-    }
+bool run_separator_sweep(
+    ILUFact *ilu, std::vector<double> &prev_vals, int sweep, MPI_Comm sep_comm
+) {
+    send_separator_rows(ilu);
+    receive_separator_rows(ilu);
+    restore_separator_rows(ilu);
+    factorize_separator_block(ilu);
 
-    bool converged = check_factorization_converged(ilu, prev_vals, FACTORIZE_EPS);
-    if (ilu->num_separator > 0) {
-        snapshot_separator_vals(ilu, prev_vals);
-    }
+    bool converged = check_factorization_converged(
+        ilu, prev_vals, FACTORIZE_EPS, sep_comm
+    );
+    snapshot_separator_vals(ilu, prev_vals);
     return converged;
 }
 
 void factorize_separators_sweeps(ILUFact *ilu) {
-    if (ilu->num_separator > 0) {
-        snapshot_separator_vals(ilu, ilu->separator_vals_prev);
-    } else {
-        ilu->separator_vals_prev.clear();
+    if (ilu->num_separator == 0) {
+        return;
     }
+
+    MPI_Comm sep_comm;
+    MPI_Comm_split(MPI_COMM_WORLD, 0, ilu->rank, &sep_comm);
+
+    snapshot_separator_vals(ilu, ilu->separator_vals_prev);
 
     bool converged = false;
     int sweep = 0;
-    const int max_sweeps = std::max(ilu->world_size, FACTORIZE_MAX_SWEEPS);
+    const int max_sweeps = std::min(
+        std::max(ilu->world_size, 1), FACTORIZE_MAX_SWEEPS
+    );
 
     while (!converged && sweep < max_sweeps) {
-        converged = run_separator_sweep(ilu, ilu->separator_vals_prev);
+        converged = run_separator_sweep(
+            ilu, ilu->separator_vals_prev, sweep, sep_comm
+        );
         ++sweep;
     }
 
     ilu->factorization_sweep_count = sweep;
+    MPI_Comm_free(&sep_comm);
 }
 
 //
@@ -1241,12 +1326,10 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     backup_separator_rows(ilu);
 
     factorize_interior_block(ilu);
-
-    std::vector<int> interior_nodes(ilu->num_interior);
-    std::iota(interior_nodes.begin(), interior_nodes.end(), 0);
-    send_factorized_rows(ilu, interior_nodes);
+    exchange_interior_rows(ilu);
 
     factorize_separators_sweeps(ilu);
+    MPI_Barrier(MPI_COMM_WORLD);
 
     return ilu;
 }
