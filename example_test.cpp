@@ -119,21 +119,21 @@ bool test_vector(struct ILUFact* ilu, int N, double* v)
     //     }
     // }
     int passed;
-    // MPI_Reduce(&success, &passed, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
-    // if (rank == 0)
-    // {
-    //     if(passed == 0)
-    //     {
-    //         printf("TEST FAILED\n");
-    //     }
-    //     else
-    //     {
-    //         printf("TEST PASSED\n");
-    //     }
-    // }
-    // free(v_part);
-    // free(x);
-    // free(res);
+    MPI_Reduce(&success, &passed, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
+    if (rank == 0)
+    {
+        if(passed == 0)
+        {
+            printf("TEST FAILED\n");
+        }
+        else
+        {
+            printf("TEST PASSED\n");
+        }
+    }
+    free(v_part);
+    free(x);
+    free(res);
     return passed;
 }
 
