@@ -9,32 +9,13 @@
 
 set -e
 
-echo "=== Rozpoczęcie zadania SLURM ID: $SLURM_JOB_ID ==="
-echo "Data rozpoczęcia: $(date)"
-
-echo "=== Ładowanie modułów perftools ==="
 module load perftools-base
 module load perftools-lite
 
-echo "=== Uruchamianie: srun $COMMAND $ARGS ==="
+export PAT_RT_EXPDIR="./fw_profile_data"
+
+rm -rf ./fw_profile_data
+
 srun ./example_test matrices/cage3.mtx
 
-# 3. Automatyczne znalezienie katalogu wygenerowanego przez CrayPat
-BASENAME=$(basename $COMMAND)
-REPORT_DIR=$(ls -dt ${BASENAME}+* 2>/dev/null | head -n 1)
-
-if [ -z "$REPORT_DIR" ]; then
-    echo "Błąd: Nie znaleziono katalogu profilowania dla $BASENAME."
-    exit 1
-fi
-
-echo "=== Znaleziono katalog profilowania: $REPORT_DIR ==="
-
-# 4. Generowanie raportu tekstowego
-REPORT_FILE="report_${BASENAME}_job_${SLURM_JOB_ID}.txt"
-echo "=== Generowanie raportu pat_report do pliku: $REPORT_FILE ==="
-pat_report -o $REPORT_FILE $REPORT_DIR
-
-echo "=== Zadanie zakończone pomyślnie! ==="
-echo "Data zakończenia: $(date)"
-echo "Wygenerowany katalog do app2: $REPORT_DIR"
+pat_report -o fw-trace-report.txt ./fw_profile_data
