@@ -775,6 +775,14 @@ void broadcast_new_rows(
             };
         }
 
+        std::cout << "SEND rank=" << ilu->rank 
+          << " global_row=" << global_row
+          << " local_row=" << local_row
+          << " nnz=" << nnz;
+        for (auto &e : data_to_send)
+            std::cout << " [" << e.col << "," << e.val << "]";
+        std::cout << std::endl;
+
         for (int rank : ilu->lower_rank_topo.lcrow_to_ranks_to_send[local_row]) {
             MPI_Send(
                 data_to_send.data(),
