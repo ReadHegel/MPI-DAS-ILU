@@ -1221,10 +1221,11 @@ bool run_separator_sweep(
 }
 
 void factorize_separators_sweeps(ILUFact *ilu) {
-    MPI_Comm sep_comm;
-    if (ilu->num_separator == 0) {
-        MPI_Comm_split(MPI_COMM_WORLD, 1, ilu->rank, &sep_comm);
-        MPI_Comm_free(&sep_comm);
+    MPI_Comm sep_comm = MPI_COMM_NULL;
+    const int color = ilu->num_separator > 0 ? 0 : MPI_UNDEFINED;
+    MPI_Comm_split(MPI_COMM_WORLD, color, ilu->rank, &sep_comm);
+    
+    if (sep_comm == MPI_COMM_NULL) {
         return;
     }
 
