@@ -25,8 +25,8 @@ mkdir -p logs
 # PROCS=(1 2 5)
 
 MATRICES=(
-    matrices/Hook_1498.mtx
-    matrices/cage14.mtx
+    # matrices/Hook_1498.mtx
+    # matrices/cage14.mtx
     matrices/cage15.mtx
 )
 
@@ -50,7 +50,7 @@ for MATRIX in "${MATRICES[@]}"; do
 
         run_log=$(mktemp)
         set +e
-        srun --label --time="$RUN_TIME" -n "$p" ./example_test "$MATRIX" > "$run_log" 2>&1
+        srun --label -n "$p" ./example_test "$MATRIX" > "$run_log" 2>&1
         exit_code=$?
         set -e
 
