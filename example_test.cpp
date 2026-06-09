@@ -80,9 +80,6 @@ bool test_vector(struct ILUFact* ilu, int N, double* v, double start_time)
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
-
-
-
     int first_row = test_rank_first_row(rank, N, world_size);
     int last_row = test_rank_first_row(rank + 1, N, world_size);
     int n_local_rows = last_row - first_row;
@@ -102,21 +99,7 @@ bool test_vector(struct ILUFact* ilu, int N, double* v, double start_time)
         printf("Time after solve: %f\n", local_time);
     }
 
-    // print vector x
-    // for (int r = 0; r < world_size; r++) {
-    //     if (r == rank) {
-    //         for (int i = 0; i < n_local_rows; i++) {
-    //             printf("%f ", x[i]);
-    //         }
-    //         printf("\n");
-    //     }
-    //     MPI_Barrier(MPI_COMM_WORLD);
-    //     usleep(100000);
-    // }
-
     ILU_multiply(ilu, x, res);
-    
-
 
     for (int i = 0; i < n_local_rows; i++) {
         if (std::abs(v_part[i] - res[i]) > EPS
@@ -178,23 +161,14 @@ bool check_factorization(
 
     double* e_part = (double*) calloc(n_local_rows, sizeof(double));
     double* col_part = (double*) malloc(n_local_rows * sizeof(double));
-    double* col_part_ref = (double*) malloc(n_local_rows * sizeof(double));
     std::vector<double> gathered_col;
-    std::vector<double> gathered_col_ref;
     std::vector<double> A_dense;
     std::vector<double> LU_dense;
-    std::vector<double> LU_dense_ref;
-    std::vector<double> LU_dense_naive;
 
     if (rank == 0) {
         gathered_col.resize(N);
-        gathered_col_ref.resize(N);
         A_dense.assign(N * N, 0.0);
         LU_dense.assign(N * N, 0.0);
-        LU_dense_ref.assign(N * N, 0.0);
-        if (world_size == 1) {
-            LU_dense_naive.assign(N * N, 0.0);
-        }
         for (int k = 0; k < nnz; k++) {
             A_dense[row[k] * N + col[k]] = val[k];
         }
@@ -206,7 +180,6 @@ bool check_factorization(
         }
 
         ILU_multiply(ilu, e_part, col_part);
-        ILU_multiply_reference(ilu, e_part, col_part_ref);
 
         MPI_Gatherv(
             col_part,
@@ -220,36 +193,14 @@ bool check_factorization(
             MPI_COMM_WORLD
         );
 
-        MPI_Gatherv(
-            col_part_ref,
-            n_local_rows,
-            MPI_DOUBLE,
-            rank == 0 ? gathered_col_ref.data() : nullptr,
-            rank == 0 ? sendcounts.data() : nullptr,
-            rank == 0 ? displs.data() : nullptr,
-            MPI_DOUBLE,
-            0,
-            MPI_COMM_WORLD
-        );
-
         if (rank == 0) {
             for (int i = 0; i < N; i++) {
                 LU_dense[i * N + j] = gathered_col[i];
-                LU_dense_ref[i * N + j] = gathered_col_ref[i];
-            }
-            if (world_size == 1) {
-                std::vector<double> naive_col(N);
-                ILU_dense_naive_lu_column(ilu, N, j, naive_col.data());
-                for (int i = 0; i < N; ++i) {
-                    LU_dense_naive[i * N + j] = naive_col[i];
-                }
             }
         }
     }
 
     int success = 1;
-    int multiply_vs_ref = 1;
-    int naive_vs_a = 1;
     if (rank == 0) {
         printf("Original matrix A:\n");
         for (int i = 0; i < N; i++) {
@@ -267,57 +218,21 @@ bool check_factorization(
             printf("\n");
         }
 
-        double max_multiply_ref_diff = 0.0;
-        for (int i = 0; i < N; i++) {
-            for (int j = 0; j < N; j++) {
-                double diff = std::abs(LU_dense[i * N + j] - LU_dense_ref[i * N + j]);
-                max_multiply_ref_diff = std::max(max_multiply_ref_diff, diff);
-                if (diff > EPS) {
-                    multiply_vs_ref = 0;
-                }
-            }
-        }
-
-        if (multiply_vs_ref) {
-            printf("MULTIPLY VS REFERENCE CHECK PASSED (max_diff=%.6e)\n", max_multiply_ref_diff);
-        } else {
-            printf("MULTIPLY VS REFERENCE CHECK FAILED (max_diff=%.6e)\n", max_multiply_ref_diff);
-        }
-
-        if (world_size == 1) {
-            double max_naive_diff = 0.0;
-            for (int k = 0; k < nnz; k++) {
-                int i = row[k];
-                int j = col[k];
-                double diff = std::abs(A_dense[i * N + j] - LU_dense_naive[i * N + j]);
-                max_naive_diff = std::max(max_naive_diff, diff);
-                if (diff > EPS || std::isnan(LU_dense_naive[i * N + j])
-                    || std::isinf(LU_dense_naive[i * N + j])) {
-                    naive_vs_a = 0;
-                }
-            }
-            if (naive_vs_a) {
-                printf("NAIVE DENSE LU VS A CHECK PASSED (max_diff=%.6e)\n", max_naive_diff);
-            } else {
-                printf("NAIVE DENSE LU VS A CHECK FAILED (max_diff=%.6e)\n", max_naive_diff);
-            }
-        } else {
-            printf("NAIVE DENSE LU VS A CHECK SKIPPED (p>1)\n");
-        }
-
+        double max_diff = 0.0;
         for (int k = 0; k < nnz; k++) {
             int i = row[k];
             int j = col[k];
             double diff = std::abs(A_dense[i * N + j] - LU_dense[i * N + j]);
+            max_diff = std::max(max_diff, diff);
             if (diff > EPS || std::isnan(LU_dense[i * N + j]) || std::isinf(LU_dense[i * N + j])) {
                 success = 0;
             }
         }
 
         if (success) {
-            printf("FACTORIZATION CHECK PASSED (ILU_multiply vs A)\n");
+            printf("FACTORIZATION CHECK PASSED (max_diff=%.6e)\n", max_diff);
         } else {
-            printf("FACTORIZATION CHECK FAILED (ILU_multiply vs A)\n");
+            printf("FACTORIZATION CHECK FAILED (max_diff=%.6e)\n", max_diff);
         }
     }
 
@@ -327,7 +242,6 @@ bool check_factorization(
 
     free(e_part);
     free(col_part);
-    free(col_part_ref);
     return passed;
 }
 

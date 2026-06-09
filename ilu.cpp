@@ -1,7 +1,3 @@
-// Optymalizacje do napisania:
-// - wysyłanie tylko wyrazy po prawej stronie przekątnej
-//
-
 #include "ilu.h"
 
 #include <mpi.h>
@@ -9,8 +5,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
-#include <iomanip>
-#include <iostream>
 #include <numeric>
 #include <set>
 #include <stdexcept>
@@ -222,14 +216,6 @@ struct ILUFact {
     std::vector<int> num_rows_in_rank;
     std::vector<int> num_interior_in_rank;
 
-    int glob_to_loc_row(int global_row) const {
-        return global_row - global_offset;
-    }
-
-    int loc_to_glob_row(int local_row) const {
-        return local_row + global_offset;
-    }
-
     void setup(int N, int world_size, int rank) {
         this->N = N;
         this->world_size = world_size;
@@ -256,46 +242,6 @@ namespace {
 // ========= UTILITIES =========
 
 namespace utils {
-
-void print_local_dense(const struct ILUFact *ilu) {
-    const int precision = 2;
-    const int width = 5;
-    MPI_Barrier(MPI_COMM_WORLD);
-    for (int p = 0; p < ilu->world_size; ++p) {
-        if (ilu->rank == p) {
-            const CSRMatrix &mat = ilu->LU;
-            std::cout << "[rank " << ilu->rank << "/" << ilu->world_size
-
-                      << "] local rows=" << ilu->LU.num_rows
-                      << " offset=" << ilu->global_offset << "\n";
-            for (int i = 0; i < mat.num_rows; ++i) {
-                int current_col = 0;
-                for (int idx = mat.row_ptr[i]; idx < mat.row_ptr[i + 1];
-                     ++idx) {
-                    int target_col = mat.col_idx[idx];
-                    while (current_col < target_col) {
-                        std::cout << std::setw(width) << "*";
-                        current_col++;
-                    }
-                    std::cout << std::setw(width) << std::fixed
-                              << std::setprecision(precision) << mat.val[idx];
-                    current_col++;
-                }
-                while (current_col < ilu->N) {
-                    std::cout << std::setw(width) << "*";
-                    current_col++;
-                }
-                std::cout << "\n";
-            }
-            std::cout << std::flush;
-
-            usleep(10000);
-        }
-        MPI_Barrier(MPI_COMM_WORLD);
-        usleep(10000);
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-}
 
 void sort_row(CSRMatrix &LU, int row) {
     int row_start = LU.row_ptr[row];
@@ -1462,7 +1408,6 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     MPI_Comm_size(MPI_COMM_WORLD, &ilu->world_size);
     
     distribute_data(N, nnz, row, col, val, ilu);
-    //utils::print_local_dense(ilu);
     interior_separator_partition(ilu);
     share_permutation(ilu);
     utils::permutation::permute_columns(ilu->LU, ilu->global_perm);
@@ -1491,89 +1436,10 @@ void ILU_solve(struct ILUFact *ilu, const double *b, double *res) {
     memcpy(res, b_vec.data(), ilu->num_rows_local * sizeof(double));
 }
 
-void ILU_multiply_reference(struct ILUFact *ilu, const double *b, double *res) {
-    std::vector<double> b_vec(b, b + ilu->num_rows_local);
-    std::vector<double> y(ilu->num_rows_local, 0.0);
-    std::vector<double> z(ilu->num_rows_local, 0.0);
-
-    b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
-    auto ext_higher = share_vector(ilu, b_vec, ilu->higher_rank_topo);
-
-    FOR_CSR(&ilu->LU, local_row, idx) {
-        int global_col = ilu->LU.col_idx[idx];
-        int global_row = ilu->global_offset + ilu->local_inv_perm[local_row];
-        if (global_col >= ilu->global_offset + ilu->LU.num_rows) {
-            y[local_row] += ext_higher.at(global_col) * ilu->LU.val[idx];
-        } else if (global_col >= global_row) {
-            y[local_row] += ilu->LU.val[idx] * b_vec[global_col - ilu->global_offset];
-        }
-    }
-
-    auto ext_lower = share_vector(ilu, y, ilu->lower_rank_topo);
-
-    for (int local_row = 0; local_row < ilu->num_rows_local; ++local_row) {
-        z[local_row] = y[local_row];
-    }
-    FOR_CSR(&ilu->LU, local_row, idx) {
-        int global_col = ilu->LU.col_idx[idx];
-        int global_row = ilu->global_offset + ilu->local_inv_perm[local_row];
-        if (global_col < ilu->global_offset) {
-            z[local_row] += ext_lower.at(global_col) * ilu->LU.val[idx];
-        } else if (global_col < global_row) {
-            z[local_row] += ilu->LU.val[idx] * y[global_col - ilu->global_offset];
-        }
-    }
-
-    z = utils::permutation::apply_permutation(z, ilu->local_perm);
-    memcpy(res, z.data(), ilu->num_rows_local * sizeof(double));
-}
-
-void ILU_dense_naive_lu_column(
-    struct ILUFact *ilu, int N, int col_j, double *col_out
-) {
-    if (ilu->rank != 0 || ilu->world_size != 1) {
-        return;
-    }
-
-    std::vector<double> L(N * N, 0.0);
-    std::vector<double> U(N * N, 0.0);
-    for (int i = 0; i < N; ++i) {
-        L[i * N + i] = 1.0;
-    }
-
-    const CSRMatrix &LU = ilu->LU;
-    for (int local_row = 0; local_row < LU.num_rows; ++local_row) {
-        int global_row = ilu->global_offset + ilu->local_inv_perm[local_row];
-        for (int idx = LU.row_ptr[local_row]; idx < LU.row_ptr[local_row + 1]; ++idx) {
-            int global_col = LU.col_idx[idx];
-            double v = LU.val[idx];
-            if (global_col < global_row) {
-                L[global_row * N + global_col] = v;
-            } else {
-                U[global_row * N + global_col] = v;
-            }
-        }
-    }
-
-    std::vector<double> y(N, 0.0);
-    std::vector<double> z(N, 0.0);
-    for (int i = 0; i < N; ++i) {
-        y[i] = U[i * N + col_j];
-    }
-    for (int i = 0; i < N; ++i) {
-        z[i] = y[i];
-        for (int j = 0; j < i; ++j) {
-            z[i] += L[i * N + j] * y[j];
-        }
-    }
-    memcpy(col_out, z.data(), N * sizeof(double));
-}
-
 void ILU_multiply(struct ILUFact *ilu, const double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     std::vector<double> result(ilu->num_rows_local, 0);
 
-    // TO DO sprawdzić kolejność permutacji 
     b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
     
     auto ext_higher = share_vector(ilu, b_vec, ilu->higher_rank_topo);
