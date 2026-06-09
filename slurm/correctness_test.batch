@@ -3,9 +3,9 @@
 #SBATCH --output=logs/correctness-%j.out
 #SBATCH --error=logs/correctness-%j.err
 #SBATCH --account=g105-2692
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=5
-#SBATCH --time=00:02:00
+#SBATCH --nodes=3
+#SBATCH --ntasks-per-node=12
+#SBATCH --time=00:06:00
 
 set -euo pipefail
 
@@ -20,18 +20,18 @@ MATRICES=(
     # matrices/cage5.mtx
     # matrices/identity.mtx
     # matrices/tridiag.mtx
-    matrices/ex5.mtx
+    # matrices/ex5.mtx
 )
-PROCS=(1 2 5)
+# PROCS=(1 2 5)
 
-# MATRICES=(
-#     # matrices/Hook_1498.mtx
-#     # matrices/cage14.mtx
-#     matrices/cage15.mtx
-# )
+MATRICES=(
+    matrices/Hook_1498.mtx
+    matrices/cage14.mtx
+    matrices/cage15.mtx
+)
 
 # # 1 node, 3 nodes, 6 nodes (po 24 ranki)
-# PROCS=(1 3 5)
+PROCS=(1 36)
 
 RESULTS=logs/correctness-${SLURM_JOB_ID}.csv
 SUMMARY=logs/correctness-${SLURM_JOB_ID}-summary.txt
