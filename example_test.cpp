@@ -118,16 +118,15 @@ bool test_vector(struct ILUFact* ilu, int N, double* v, double start_time)
     
 
 
-    // print_vectors(v_part, res, n_local_rows, rank, world_size);
-    // for (int i = first_row; i < last_row; i++)
-    // {
-    //     if (abs(v_part[i - first_row] - res[i - first_row]) > EPS || std::isnan(res[i - first_row]) || std::isinf(res[i - first_row]))
-    //     {
-    //         success = 0;
-    //     }
-    // }
-    int passed;
+    for (int i = 0; i < n_local_rows; i++) {
+        if (std::abs(v_part[i] - res[i]) > EPS
+            || std::isnan(res[i]) || std::isinf(res[i])) {
+            success = 0;
+        }
+    }
+    int passed = 1;
     MPI_Reduce(&success, &passed, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&passed, 1, MPI_INT, 0, MPI_COMM_WORLD);
     if (rank == 0)
     {
         if(passed == 0)
@@ -236,12 +235,12 @@ bool check_factorization(
             printf("\n");
         }
 
-        for (int i = 0; i < N; i++) {
-            for (int j = 0; j < N; j++) {
-                double diff = std::abs(A_dense[i * N + j] - LU_dense[i * N + j]);
-                if (diff > EPS || std::isnan(LU_dense[i * N + j]) || std::isinf(LU_dense[i * N + j])) {
-                    success = 0;
-                }
+        for (int k = 0; k < nnz; k++) {
+            int i = row[k];
+            int j = col[k];
+            double diff = std::abs(A_dense[i * N + j] - LU_dense[i * N + j]);
+            if (diff > EPS || std::isnan(LU_dense[i * N + j]) || std::isinf(LU_dense[i * N + j])) {
+                success = 0;
             }
         }
 
