@@ -39,38 +39,45 @@ struct CSRMatrix {
     std::vector<int> col_idx;  // Size: nnz
     std::vector<double> val;   // Size: nnz
 
-    static CSRMatrix from_COO(
-        int N, int nnz, const int *row, const int *col, const double *val
+    static CSRMatrix from_local_coo(
+        int num_rows,
+        int num_cols,
+        int global_offset,
+        const int *rows,
+        const int *cols,
+        const double *vals,
+        int nnz_local
     ) {
         CSRMatrix mat;
+        mat.num_rows = num_rows;
+        mat.num_cols = num_cols;
+        mat.nnz = nnz_local;
+        mat.row_ptr.assign(num_rows + 1, 0);
+        mat.col_idx.resize(nnz_local);
+        mat.val.resize(nnz_local);
 
-        mat.num_rows = N;
-        mat.num_cols = N;
-        mat.nnz = nnz;
-        mat.row_ptr.assign(N + 1, 0);
-        mat.col_idx.resize(nnz);
-        mat.val.resize(nnz);
-
-        std::vector<int> indices(nnz);
-        std::iota(indices.begin(), indices.end(), 0);
-
-        std::sort(indices.begin(), indices.end(), [&](int a, int b) {
-            if (row[a] != row[b]) {
-                return row[a] < row[b];
-            }
-            return col[a] < col[b];
-        });
-
-        for (int i = 0; i < nnz; ++i) {
-            int idx = indices[i];
-            int r = row[idx];
-
-            mat.row_ptr[r + 1]++;
-            mat.col_idx[i] = col[idx];
-            mat.val[i] = val[idx];
+        if (nnz_local == 0) {
+            return mat;
         }
 
-        for (int i = 0; i < N; ++i) {
+        std::vector<int> order(nnz_local);
+        std::iota(order.begin(), order.end(), 0);
+        std::sort(order.begin(), order.end(), [&](int a, int b) {
+            if (rows[a] != rows[b]) {
+                return rows[a] < rows[b];
+            }
+            return cols[a] < cols[b];
+        });
+
+        for (int i = 0; i < nnz_local; ++i) {
+            int src = order[i];
+            int local_row = rows[src] - global_offset;
+            mat.row_ptr[local_row + 1]++;
+            mat.col_idx[i] = cols[src];
+            mat.val[i] = vals[src];
+        }
+
+        for (int i = 0; i < num_rows; ++i) {
             mat.row_ptr[i + 1] += mat.row_ptr[i];
         }
 
@@ -379,94 +386,102 @@ void permute_columns(CSRMatrix &LU, const std::vector<int> &global_perm) {
 void distribute_data(
     int N, int nnz, const int *row, const int *col, const double *val, struct ILUFact *ilu
 ) {
-    CSRMatrix &received_matrix = ilu->LU;
-
-    auto get_first_row_of_process = [&](int rank) {
-        return utils::get_first_row_of_process(rank, ilu->world_size, N);
-    };
-
     MPI_Bcast(&N, 1, MPI_INT, 0, MPI_COMM_WORLD);
     ilu->setup(N, ilu->world_size, ilu->rank);
 
-    received_matrix.num_rows = ilu->num_rows_local;
-    received_matrix.num_cols = N;
-    received_matrix.row_ptr.resize(received_matrix.num_rows + 1);
-
-    std::vector<int> col_idx_sendcounts;
-    std::vector<int> col_idx_displacements;
-    std::vector<int> row_ptr_sendcounts;
-    std::vector<int> row_ptr_displacements;
-    CSRMatrix A;
-
+    std::vector<int> sendcounts(ilu->world_size, 0);
     if (ilu->rank == 0) {
-        A = CSRMatrix::from_COO(N, nnz, row, col, val);
-        col_idx_sendcounts.resize(ilu->world_size);
-        col_idx_displacements.resize(ilu->world_size);
-        row_ptr_sendcounts.resize(ilu->world_size);
-        row_ptr_displacements.resize(ilu->world_size);
-
-        for (int r = 0; r < ilu->world_size; ++r) {
-            int first_row = get_first_row_of_process(r);
-            int last_row = (r + 1 < ilu->world_size)
-                ? get_first_row_of_process(r + 1) - 1
-                : N - 1;
-
-            row_ptr_sendcounts[r] = last_row - first_row + 2;
-            row_ptr_displacements[r] = first_row;
-
-            col_idx_displacements[r] = A.row_ptr[first_row];
-            col_idx_sendcounts[r] =
-                A.row_ptr[last_row + 1] - A.row_ptr[first_row];
+        for (int k = 0; k < nnz; ++k) {
+            int owner = utils::get_owner_rank(row[k], ilu->world_size, N);
+            sendcounts[owner]++;
         }
     }
 
-    MPI_Scatterv(
-        ilu->rank == 0 ? A.row_ptr.data() : nullptr,
-        ilu->rank == 0 ? row_ptr_sendcounts.data() : nullptr,
-        ilu->rank == 0 ? row_ptr_displacements.data() : nullptr,
+    int local_nnz = 0;
+    MPI_Scatter(
+        ilu->rank == 0 ? sendcounts.data() : nullptr,
+        1,
         MPI_INT,
-        received_matrix.row_ptr.data(),
-        ilu->num_rows_local + 1,
-        MPI_INT,
-        0,
-        MPI_COMM_WORLD
-    );
-
-    received_matrix.nnz =
-        received_matrix.row_ptr[received_matrix.num_rows] -
-        received_matrix.row_ptr[0];
-
-    received_matrix.col_idx.resize(received_matrix.nnz);
-    received_matrix.val.resize(received_matrix.nnz);
-
-    MPI_Scatterv(
-        ilu->rank == 0 ? A.col_idx.data() : nullptr,
-        ilu->rank == 0 ? col_idx_sendcounts.data() : nullptr,
-        ilu->rank == 0 ? col_idx_displacements.data() : nullptr,
-        MPI_INT,
-        received_matrix.col_idx.data(),
-        received_matrix.nnz,
+        &local_nnz,
+        1,
         MPI_INT,
         0,
         MPI_COMM_WORLD
     );
 
-    MPI_Scatterv(
-        ilu->rank == 0 ? A.val.data() : nullptr,
-        ilu->rank == 0 ? col_idx_sendcounts.data() : nullptr,
-        ilu->rank == 0 ? col_idx_displacements.data() : nullptr,
-        MPI_DOUBLE,
-        received_matrix.val.data(),
-        received_matrix.nnz,
-        MPI_DOUBLE,
-        0,
-        MPI_COMM_WORLD
-    );
+    std::vector<int> send_rows;
+    std::vector<int> send_cols;
+    std::vector<double> send_vals;
+    std::vector<int> displs(ilu->world_size, 0);
 
-    int offset = received_matrix.row_ptr[0];
-    for (auto &rp : received_matrix.row_ptr) {
-        rp -= offset;
+    if (ilu->rank == 0) {
+        for (int r = 1; r < ilu->world_size; ++r) {
+            displs[r] = displs[r - 1] + sendcounts[r - 1];
+        }
+
+        send_rows.resize(nnz);
+        send_cols.resize(nnz);
+        send_vals.resize(nnz);
+
+        std::vector<int> next_slot = displs;
+        for (int k = 0; k < nnz; ++k) {
+            int owner = utils::get_owner_rank(row[k], ilu->world_size, N);
+            int dst = next_slot[owner]++;
+            send_rows[dst] = row[k];
+            send_cols[dst] = col[k];
+            send_vals[dst] = val[k];
+        }
     }
+
+    std::vector<int> local_rows(local_nnz);
+    std::vector<int> local_cols(local_nnz);
+    std::vector<double> local_vals(local_nnz);
+
+    MPI_Scatterv(
+        ilu->rank == 0 ? send_rows.data() : nullptr,
+        ilu->rank == 0 ? sendcounts.data() : nullptr,
+        ilu->rank == 0 ? displs.data() : nullptr,
+        MPI_INT,
+        local_rows.data(),
+        local_nnz,
+        MPI_INT,
+        0,
+        MPI_COMM_WORLD
+    );
+
+    MPI_Scatterv(
+        ilu->rank == 0 ? send_cols.data() : nullptr,
+        ilu->rank == 0 ? sendcounts.data() : nullptr,
+        ilu->rank == 0 ? displs.data() : nullptr,
+        MPI_INT,
+        local_cols.data(),
+        local_nnz,
+        MPI_INT,
+        0,
+        MPI_COMM_WORLD
+    );
+
+    MPI_Scatterv(
+        ilu->rank == 0 ? send_vals.data() : nullptr,
+        ilu->rank == 0 ? sendcounts.data() : nullptr,
+        ilu->rank == 0 ? displs.data() : nullptr,
+        MPI_DOUBLE,
+        local_vals.data(),
+        local_nnz,
+        MPI_DOUBLE,
+        0,
+        MPI_COMM_WORLD
+    );
+
+    ilu->LU = CSRMatrix::from_local_coo(
+        ilu->num_rows_local,
+        N,
+        ilu->global_offset,
+        local_rows.data(),
+        local_cols.data(),
+        local_vals.data(),
+        local_nnz
+    );
 }
 
 //
