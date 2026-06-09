@@ -12,8 +12,8 @@
 #include <vector>
 #include <unistd.h>
 
-const double EPS = 1e-10;
-const double FACTORIZE_EPS = 1e-8;
+const double EPS = 1e-7;
+const double FACTORIZE_EPS = 1e-7;
 const int FACTORIZE_MAX_SWEEPS = 50;
 
 constexpr int MPI_TAG_SHARE_ROWS = 10;
