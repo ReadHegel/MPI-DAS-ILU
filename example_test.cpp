@@ -161,14 +161,13 @@ int main(int argc, char* argv[])
     int* row = NULL;
     int* col = NULL;
     double* val = NULL;
+    read_matrix(argv[1], &N, &nnz, &row, &col, &val);
+
     MPI_Barrier(MPI_COMM_WORLD);
     double start_time = MPI_Wtime();
     if (rank == 0)
     {   
-
         printf("Starting test\n");
-        
-        read_matrix(argv[1], &N, &nnz, &row, &col, &val);
     }
 
     struct ILUFact* ilu;
