@@ -409,6 +409,11 @@ void distribute_data(
             received_matrix.row_ptr.begin()
         );
 
+        std::vector<MPI_Request> row_ptr_send_requests;
+        std::vector<int> nnz_send_bufs;
+        row_ptr_send_requests.reserve(2 * (ilu->world_size - 1));
+        nnz_send_bufs.reserve(ilu->world_size - 1);
+
         for (int r = 1; r < ilu->world_size; ++r) {
             first_row = last_row + 1;
             last_row = get_first_row_of_process(r + 1) - 1;
@@ -417,15 +422,36 @@ void distribute_data(
                 A.row_ptr[last_row + 1] - A.row_ptr[first_row];
             col_idx_displacements[r] = A.row_ptr[first_row];
 
-            int nnz_for_r = col_idx_sendcounts[r];
-            MPI_Send(&nnz_for_r, 1, MPI_INT, r, 0, MPI_COMM_WORLD);
-            MPI_Send(
+            nnz_send_bufs.push_back(col_idx_sendcounts[r]);
+            MPI_Request req;
+            MPI_Isend(
+                &nnz_send_bufs.back(),
+                1,
+                MPI_INT,
+                r,
+                0,
+                MPI_COMM_WORLD,
+                &req
+            );
+            row_ptr_send_requests.push_back(req);
+
+            MPI_Isend(
                 &A.row_ptr[first_row],
                 last_row - first_row + 2,
                 MPI_INT,
                 r,
                 0,
-                MPI_COMM_WORLD
+                MPI_COMM_WORLD,
+                &req
+            );
+            row_ptr_send_requests.push_back(req);
+        }
+
+        if (!row_ptr_send_requests.empty()) {
+            MPI_Waitall(
+                static_cast<int>(row_ptr_send_requests.size()),
+                row_ptr_send_requests.data(),
+                MPI_STATUSES_IGNORE
             );
         }
     }
