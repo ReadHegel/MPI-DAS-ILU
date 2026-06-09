@@ -1291,7 +1291,6 @@ void factorize_separators_sweeps(ILUFact *ilu) {
     }
 
     ilu->factorization_sweep_count = sweep;
-    std::cout<<"Factorization sweep count: "<<sweep<<std::endl;
     MPI_Comm_free(&sep_comm);
 }
 
