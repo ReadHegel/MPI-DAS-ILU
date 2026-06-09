@@ -1,26 +1,37 @@
 #!/bin/bash -l
-#SBATCH --job-name=ILU-correctness
+#SBATCH --job-name=ILU-correctness-large
 #SBATCH --output=logs/correctness-%j.out
 #SBATCH --error=logs/correctness-%j.err
 #SBATCH --account=g105-2692
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=5
-#SBATCH --time=00:12:00
+#SBATCH --nodes=6
+#SBATCH --ntasks-per-node=24
+#SBATCH --time=00:15:00
 
 set -euo pipefail
 
+RUN_TIME=00:01:00
+
 mkdir -p logs
 
+# --- małe macierze (correctness szybki) — odkomentuj na później ---
+# MATRICES=(
+#     matrices/cage3.mtx
+#     matrices/cage4.mtx
+#     matrices/cage5.mtx
+#     matrices/identity.mtx
+#     matrices/tridiag.mtx
+#     matrices/ex5.mtx
+# )
+# PROCS=(1 2 5)
+
 MATRICES=(
-    matrices/cage3.mtx
-    matrices/cage4.mtx
-    matrices/cage5.mtx
-    matrices/identity.mtx
-    matrices/tridiag.mtx
-    matrices/ex5.mtx
+    matrices/Hook_1498.mtx
+    matrices/cage14.mtx
+    matrices/cage15.mtx
 )
 
-PROCS=(1 2 5)
+# 1 node, 3 nodes, 6 nodes (po 24 ranki)
+PROCS=(1 72 144)
 
 RESULTS=logs/correctness-${SLURM_JOB_ID}.csv
 SUMMARY=logs/correctness-${SLURM_JOB_ID}-summary.txt
@@ -34,12 +45,12 @@ failed=0
 for MATRIX in "${MATRICES[@]}"; do
     for p in "${PROCS[@]}"; do
         echo "========================================"
-        echo "=== matrix=$MATRIX  p=$p ==="
+        echo "=== matrix=$MATRIX  p=$p  limit=$RUN_TIME ==="
         echo "========================================"
 
         run_log=$(mktemp)
         set +e
-        srun --label --time=00:00:20 -n "$p" ./example_test "$MATRIX" > "$run_log" 2>&1
+        srun --label --time="$RUN_TIME" -n "$p" ./example_test "$MATRIX" > "$run_log" 2>&1
         exit_code=$?
         set -e
 
