@@ -4,8 +4,8 @@
 #SBATCH --error=logs/correctness-%j.err
 #SBATCH --account=g105-2692
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --time=00:05:00
+#SBATCH --ntasks-per-node=5
+#SBATCH --time=00:07:00
 
 set -euo pipefail
 
@@ -15,23 +15,23 @@ mkdir -p logs
 
 # --- małe macierze (correctness szybki) — odkomentuj na później ---
 MATRICES=(
-    # matrices/cage3.mtx
-    # matrices/cage4.mtx
-    # matrices/cage5.mtx
-    # matrices/identity.mtx
-    # matrices/tridiag.mtx
-    # matrices/ex5.mtx
+    matrices/cage3.mtx
+    matrices/cage4.mtx
+    matrices/cage5.mtx
+    matrices/identity.mtx
+    matrices/tridiag.mtx
+    matrices/ex5.mtx
 )
 # PROCS=(1 2 5)
 
-MATRICES=(
-    matrices/Hook_1498.mtx
-    matrices/cage14.mtx
-    matrices/cage15.mtx
-)
+# MATRICES=(
+#     matrices/Hook_1498.mtx
+#     matrices/cage14.mtx
+#     matrices/cage15.mtx
+# )
 
 # # 1 node, 3 nodes, 6 nodes (po 24 ranki)
-PROCS=(1)
+PROCS=(1 2 3 4 5)
 
 RESULTS=logs/correctness-${SLURM_JOB_ID}.csv
 SUMMARY=logs/correctness-${SLURM_JOB_ID}-summary.txt
