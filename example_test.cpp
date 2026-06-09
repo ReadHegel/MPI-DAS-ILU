@@ -194,7 +194,7 @@ int main(int argc, char* argv[])
         printf("Time after factorization: %f\n", MPI_Wtime() - start_time);
     }
 
-    // test_vector(ilu, N, v1);
+    test_vector(ilu, N, v1, start_time);
     test_vector(ilu, N, v2, start_time);
 
     MPI_Barrier(MPI_COMM_WORLD);

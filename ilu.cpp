@@ -1224,12 +1224,10 @@ void factorize_separators_sweeps(ILUFact *ilu) {
     MPI_Comm sep_comm = MPI_COMM_NULL;
     const int color = ilu->num_separator > 0 ? 0 : MPI_UNDEFINED;
     MPI_Comm_split(MPI_COMM_WORLD, color, ilu->rank, &sep_comm);
-    
+
     if (sep_comm == MPI_COMM_NULL) {
         return;
     }
-
-    MPI_Comm_split(MPI_COMM_WORLD, 0, ilu->rank, &sep_comm);
 
     snapshot_separator_vals(ilu, ilu->separator_vals_prev);
 
@@ -1448,9 +1446,12 @@ struct ILUFact* ILU_factorize(int N, int nnz, const int* row, const int* col, co
     share_dependencies(ilu);
     backup_separator_rows(ilu);
     factorize_interior_block(ilu);
-    exchange_interior_rows(ilu);
 
-    factorize_separators_sweeps(ilu);      
+    if (ilu->world_size != 1) { 
+        exchange_interior_rows(ilu);
+        factorize_separators_sweeps(ilu);   
+    }
+   
     MPI_Barrier(MPI_COMM_WORLD);
 
     return ilu;
