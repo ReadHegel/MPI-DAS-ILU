@@ -1476,6 +1476,84 @@ void ILU_solve(struct ILUFact *ilu, const double *b, double *res) {
     memcpy(res, b_vec.data(), ilu->num_rows_local * sizeof(double));
 }
 
+void ILU_multiply_reference(struct ILUFact *ilu, const double *b, double *res) {
+    std::vector<double> b_vec(b, b + ilu->num_rows_local);
+    std::vector<double> y(ilu->num_rows_local, 0.0);
+    std::vector<double> z(ilu->num_rows_local, 0.0);
+
+    b_vec = utils::permutation::apply_permutation(b_vec, ilu->local_inv_perm);
+    auto ext_higher = share_vector(ilu, b_vec, ilu->higher_rank_topo);
+
+    FOR_CSR(&ilu->LU, local_row, idx) {
+        int global_col = ilu->LU.col_idx[idx];
+        int global_row = ilu->global_offset + ilu->local_inv_perm[local_row];
+        if (global_col >= ilu->global_offset + ilu->LU.num_rows) {
+            y[local_row] += ext_higher.at(global_col) * ilu->LU.val[idx];
+        } else if (global_col >= global_row) {
+            y[local_row] += ilu->LU.val[idx] * b_vec[global_col - ilu->global_offset];
+        }
+    }
+
+    auto ext_lower = share_vector(ilu, y, ilu->lower_rank_topo);
+
+    for (int local_row = 0; local_row < ilu->num_rows_local; ++local_row) {
+        z[local_row] = y[local_row];
+    }
+    FOR_CSR(&ilu->LU, local_row, idx) {
+        int global_col = ilu->LU.col_idx[idx];
+        int global_row = ilu->global_offset + ilu->local_inv_perm[local_row];
+        if (global_col < ilu->global_offset) {
+            z[local_row] += ext_lower.at(global_col) * ilu->LU.val[idx];
+        } else if (global_col < global_row) {
+            z[local_row] += ilu->LU.val[idx] * y[global_col - ilu->global_offset];
+        }
+    }
+
+    z = utils::permutation::apply_permutation(z, ilu->local_perm);
+    memcpy(res, z.data(), ilu->num_rows_local * sizeof(double));
+}
+
+void ILU_dense_naive_lu_column(
+    struct ILUFact *ilu, int N, int col_j, double *col_out
+) {
+    if (ilu->rank != 0 || ilu->world_size != 1) {
+        return;
+    }
+
+    std::vector<double> L(N * N, 0.0);
+    std::vector<double> U(N * N, 0.0);
+    for (int i = 0; i < N; ++i) {
+        L[i * N + i] = 1.0;
+    }
+
+    const CSRMatrix &LU = ilu->LU;
+    for (int local_row = 0; local_row < LU.num_rows; ++local_row) {
+        int global_row = ilu->global_offset + ilu->local_inv_perm[local_row];
+        for (int idx = LU.row_ptr[local_row]; idx < LU.row_ptr[local_row + 1]; ++idx) {
+            int global_col = LU.col_idx[idx];
+            double v = LU.val[idx];
+            if (global_col < global_row) {
+                L[global_row * N + global_col] = v;
+            } else {
+                U[global_row * N + global_col] = v;
+            }
+        }
+    }
+
+    std::vector<double> y(N, 0.0);
+    std::vector<double> z(N, 0.0);
+    for (int i = 0; i < N; ++i) {
+        y[i] = U[i * N + col_j];
+    }
+    for (int i = 0; i < N; ++i) {
+        z[i] = y[i];
+        for (int j = 0; j < i; ++j) {
+            z[i] += L[i * N + j] * y[j];
+        }
+    }
+    memcpy(col_out, z.data(), N * sizeof(double));
+}
+
 void ILU_multiply(struct ILUFact *ilu, const double *b, double *res) {
     std::vector<double> b_vec(b, b + ilu->num_rows_local);
     std::vector<double> result(ilu->num_rows_local, 0);

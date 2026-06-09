@@ -5,7 +5,7 @@
 #SBATCH --account=g105-2692
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=5
-#SBATCH --time=00:5:00
+#SBATCH --time=00:02:00
 
 set -euo pipefail
 
@@ -16,8 +16,8 @@ mkdir -p logs
 # --- małe macierze (correctness szybki) — odkomentuj na później ---
 MATRICES=(
     # matrices/cage3.mtx
-    matrices/cage4.mtx
-    matrices/cage5.mtx
+    # matrices/cage4.mtx
+    # matrices/cage5.mtx
     # matrices/identity.mtx
     # matrices/tridiag.mtx
     matrices/ex5.mtx
