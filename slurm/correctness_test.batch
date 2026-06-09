@@ -3,9 +3,9 @@
 #SBATCH --output=logs/correctness-%j.out
 #SBATCH --error=logs/correctness-%j.err
 #SBATCH --account=g105-2692
-#SBATCH --nodes=3
-#SBATCH --ntasks-per-node=12
-#SBATCH --time=00:06:00
+#SBATCH --nodes=5
+#SBATCH --ntasks-per-node=24
+#SBATCH --time=00:02:00
 
 set -euo pipefail
 
@@ -31,7 +31,7 @@ MATRICES=(
 )
 
 # # 1 node, 3 nodes, 6 nodes (po 24 ranki)
-PROCS=(1 36)
+PROCS=(120)
 
 RESULTS=logs/correctness-${SLURM_JOB_ID}.csv
 SUMMARY=logs/correctness-${SLURM_JOB_ID}-summary.txt
