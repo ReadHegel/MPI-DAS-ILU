@@ -389,100 +389,55 @@ void distribute_data(
 
     std::vector<int> col_idx_sendcounts;
     std::vector<int> col_idx_displacements;
+    std::vector<int> row_ptr_sendcounts;
+    std::vector<int> row_ptr_displacements;
     CSRMatrix A;
 
     if (ilu->rank == 0) {
         A = CSRMatrix::from_COO(N, nnz, row, col, val);
-        col_idx_sendcounts.resize(ilu->world_size, 0);
-        col_idx_displacements.resize(ilu->world_size, 0);
+        col_idx_sendcounts.resize(ilu->world_size);
+        col_idx_displacements.resize(ilu->world_size);
+        row_ptr_sendcounts.resize(ilu->world_size);
+        row_ptr_displacements.resize(ilu->world_size);
 
-        int first_row = 0;
-        int last_row = get_first_row_of_process(1) - 1;
+        for (int r = 0; r < ilu->world_size; ++r) {
+            int first_row = get_first_row_of_process(r);
+            int last_row = (r + 1 < ilu->world_size)
+                ? get_first_row_of_process(r + 1) - 1
+                : N - 1;
 
-        col_idx_displacements[0] = A.row_ptr[first_row];
-        col_idx_sendcounts[0] = A.row_ptr[last_row + 1] - A.row_ptr[first_row];
+            row_ptr_sendcounts[r] = last_row - first_row + 2;
+            row_ptr_displacements[r] = first_row;
 
-        received_matrix.nnz = col_idx_sendcounts[0];
-        std::copy(
-            A.row_ptr.begin() + first_row,
-            A.row_ptr.begin() + last_row + 2,
-            received_matrix.row_ptr.begin()
-        );
-
-        std::vector<MPI_Request> row_ptr_send_requests;
-        std::vector<int> nnz_send_bufs;
-        row_ptr_send_requests.reserve(2 * (ilu->world_size - 1));
-        nnz_send_bufs.reserve(ilu->world_size - 1);
-
-        for (int r = 1; r < ilu->world_size; ++r) {
-            first_row = last_row + 1;
-            last_row = get_first_row_of_process(r + 1) - 1;
-
+            col_idx_displacements[r] = A.row_ptr[first_row];
             col_idx_sendcounts[r] =
                 A.row_ptr[last_row + 1] - A.row_ptr[first_row];
-            col_idx_displacements[r] = A.row_ptr[first_row];
-
-            nnz_send_bufs.push_back(col_idx_sendcounts[r]);
-            MPI_Request req;
-            MPI_Isend(
-                &nnz_send_bufs.back(),
-                1,
-                MPI_INT,
-                r,
-                0,
-                MPI_COMM_WORLD,
-                &req
-            );
-            row_ptr_send_requests.push_back(req);
-
-            MPI_Isend(
-                &A.row_ptr[first_row],
-                last_row - first_row + 2,
-                MPI_INT,
-                r,
-                0,
-                MPI_COMM_WORLD,
-                &req
-            );
-            row_ptr_send_requests.push_back(req);
-        }
-
-        if (!row_ptr_send_requests.empty()) {
-            MPI_Waitall(
-                static_cast<int>(row_ptr_send_requests.size()),
-                row_ptr_send_requests.data(),
-                MPI_STATUSES_IGNORE
-            );
         }
     }
-    else {
-        MPI_Recv(
-            &received_matrix.nnz,
-            1,
-            MPI_INT,
-            0,
-            0,
-            MPI_COMM_WORLD,
-            MPI_STATUS_IGNORE
-        );
-        MPI_Recv(
-            received_matrix.row_ptr.data(),
-            received_matrix.num_rows + 1,
-            MPI_INT,
-            0,
-            0,
-            MPI_COMM_WORLD,
-            MPI_STATUS_IGNORE
-        );
-    }
+
+    MPI_Scatterv(
+        ilu->rank == 0 ? A.row_ptr.data() : nullptr,
+        ilu->rank == 0 ? row_ptr_sendcounts.data() : nullptr,
+        ilu->rank == 0 ? row_ptr_displacements.data() : nullptr,
+        MPI_INT,
+        received_matrix.row_ptr.data(),
+        ilu->num_rows_local + 1,
+        MPI_INT,
+        0,
+        MPI_COMM_WORLD
+    );
+
+    received_matrix.nnz =
+        received_matrix.row_ptr[received_matrix.num_rows] -
+        received_matrix.row_ptr[0];
 
     received_matrix.col_idx.resize(received_matrix.nnz);
     received_matrix.val.resize(received_matrix.nnz);
 
     MPI_Scatterv(
         ilu->rank == 0 ? A.col_idx.data() : nullptr,
-        col_idx_sendcounts.data(),
-        col_idx_displacements.data(),
+        ilu->rank == 0 ? col_idx_sendcounts.data() : nullptr,
+        ilu->rank == 0 ? col_idx_displacements.data() : nullptr,
         MPI_INT,
         received_matrix.col_idx.data(),
         received_matrix.nnz,
@@ -493,8 +448,8 @@ void distribute_data(
 
     MPI_Scatterv(
         ilu->rank == 0 ? A.val.data() : nullptr,
-        col_idx_sendcounts.data(),
-        col_idx_displacements.data(),
+        ilu->rank == 0 ? col_idx_sendcounts.data() : nullptr,
+        ilu->rank == 0 ? col_idx_displacements.data() : nullptr,
         MPI_DOUBLE,
         received_matrix.val.data(),
         received_matrix.nnz,
