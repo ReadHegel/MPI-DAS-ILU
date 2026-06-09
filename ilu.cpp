@@ -1092,7 +1092,7 @@ void ILU(
                 LU.val.data() + diag_kk_idx + 1,
                 LU.col_idx.data() + diag_kk_idx + 1,
                 LU.row_ptr[row_to_subtract_loc + 1] -
-                    LU.row_ptr[row_to_subtract_loc] - 1
+                    diag_kk_idx - 1
             );
         }
     }
