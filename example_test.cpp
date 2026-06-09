@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <vector>
 #include <mpi.h>
 #include <iostream>
 #include <unistd.h>
@@ -144,6 +145,122 @@ bool test_vector(struct ILUFact* ilu, int N, double* v, double start_time)
     return passed;
 }
 
+void fill_row_partition(int N, int world_size, std::vector<int>& sendcounts, std::vector<int>& displs)
+{
+    sendcounts.resize(world_size);
+    displs.resize(world_size);
+    for (int r = 0; r < world_size; r++) {
+        int first = test_rank_first_row(r, N, world_size);
+        int last = test_rank_first_row(r + 1, N, world_size);
+        sendcounts[r] = last - first;
+        displs[r] = first;
+    }
+}
+
+bool check_factorization(
+    struct ILUFact* ilu,
+    int N,
+    int nnz,
+    const int* row,
+    const int* col,
+    const double* val
+) {
+    int rank;
+    int world_size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    std::vector<int> sendcounts;
+    std::vector<int> displs;
+    fill_row_partition(N, world_size, sendcounts, displs);
+
+    const int n_local_rows = sendcounts[rank];
+    const int first_row = displs[rank];
+
+    double* e_part = (double*) calloc(n_local_rows, sizeof(double));
+    double* col_part = (double*) malloc(n_local_rows * sizeof(double));
+    std::vector<double> gathered_col;
+    std::vector<double> A_dense;
+    std::vector<double> LU_dense;
+
+    if (rank == 0) {
+        gathered_col.resize(N);
+        A_dense.assign(N * N, 0.0);
+        LU_dense.assign(N * N, 0.0);
+        for (int k = 0; k < nnz; k++) {
+            A_dense[row[k] * N + col[k]] = val[k];
+        }
+    }
+
+    for (int j = 0; j < N; j++) {
+        for (int i = 0; i < n_local_rows; i++) {
+            e_part[i] = (first_row + i == j) ? 1.0 : 0.0;
+        }
+
+        ILU_multiply(ilu, e_part, col_part);
+
+        MPI_Gatherv(
+            col_part,
+            n_local_rows,
+            MPI_DOUBLE,
+            rank == 0 ? gathered_col.data() : nullptr,
+            rank == 0 ? sendcounts.data() : nullptr,
+            rank == 0 ? displs.data() : nullptr,
+            MPI_DOUBLE,
+            0,
+            MPI_COMM_WORLD
+        );
+
+        if (rank == 0) {
+            for (int i = 0; i < N; i++) {
+                LU_dense[i * N + j] = gathered_col[i];
+            }
+        }
+    }
+
+    int success = 1;
+    if (rank == 0) {
+        printf("Original matrix A:\n");
+        for (int i = 0; i < N; i++) {
+            for (int j = 0; j < N; j++) {
+                printf("%12.6f ", A_dense[i * N + j]);
+            }
+            printf("\n");
+        }
+
+        printf("Recovered matrix (LU * I):\n");
+        for (int i = 0; i < N; i++) {
+            for (int j = 0; j < N; j++) {
+                printf("%12.6f ", LU_dense[i * N + j]);
+            }
+            printf("\n");
+        }
+
+        for (int i = 0; i < N; i++) {
+            for (int j = 0; j < N; j++) {
+                double diff = std::abs(A_dense[i * N + j] - LU_dense[i * N + j]);
+                if (diff > EPS || std::isnan(LU_dense[i * N + j]) || std::isinf(LU_dense[i * N + j])) {
+                    success = 0;
+                }
+            }
+        }
+
+        if (success) {
+            printf("FACTORIZATION CHECK PASSED\n");
+        } else {
+            printf("FACTORIZATION CHECK FAILED\n");
+        }
+    }
+
+    int passed = 0;
+    MPI_Bcast(&success, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    passed = success;
+
+    free(e_part);
+    free(col_part);
+    return passed;
+}
+
 int main(int argc, char* argv[])
 {
     assert(argc == 2);
@@ -173,13 +290,18 @@ int main(int argc, char* argv[])
         printf("Starting test\n");
     }
 
+
+
     struct ILUFact* ilu;
     ilu = ILU_factorize(N, nnz, row, col, val);
+    
+    MPI_Bcast(&N, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&nnz, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    check_factorization(ilu, N, nnz, row, col, val);
+
     free(row);
     free(col);
     free(val);
-
-    MPI_Bcast(&N, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
     double* v1 = (double*) malloc(N * sizeof(double));
     double* v2 = (double*) malloc(N * sizeof(double));

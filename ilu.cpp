@@ -22,6 +22,11 @@ const double EPS = 1e-10;
 const double FACTORIZE_EPS = 1e-8;
 const int FACTORIZE_MAX_SWEEPS = 50;
 
+constexpr int MPI_TAG_SHARE_ROWS = 10;
+constexpr int MPI_TAG_SHARE_NNZ = 11;
+constexpr int MPI_TAG_FACTORIZE_ROW_BASE = 20;
+constexpr int MPI_TAG_SOLVE_VECTOR_BASE = 200;
+
 #define FOR_CSR(matrix_ptr, row_var, idx_var) \
     for (int row_var = 0; row_var < (matrix_ptr)->num_rows; ++row_var) \
         for (int idx_var = (matrix_ptr)->row_ptr[row_var]; idx_var < (matrix_ptr)->row_ptr[row_var + 1]; ++idx_var)
@@ -609,7 +614,7 @@ auto share_needed_rows(
                 requests_count_to_recv[p],
                 MPI_INT,
                 p,
-                ilu->N + 1,
+                MPI_TAG_SHARE_ROWS,
                 MPI_COMM_WORLD,
                 &req
             );
@@ -627,7 +632,7 @@ auto share_needed_rows(
                 requests_count_to_send[p],
                 MPI_INT,
                 p,
-                ilu->N + 1,
+                MPI_TAG_SHARE_ROWS,
                 MPI_COMM_WORLD,
                 &req
             );
@@ -663,7 +668,7 @@ auto share_nnz(
                 nnz_to_send[p].size(),
                 MPI_INT,
                 p,
-                ilu->N + 3,
+                MPI_TAG_SHARE_NNZ,
                 MPI_COMM_WORLD,
                 &req
             );
@@ -680,7 +685,7 @@ auto share_nnz(
                 nnz_to_recv[p].size(),
                 MPI_INT,
                 p,
-                ilu->N + 3,
+                MPI_TAG_SHARE_NNZ,
                 MPI_COMM_WORLD,
                 &req
             );
@@ -715,9 +720,13 @@ void build_solve_exchange_groups(CommunicationTopology &topo) {
     }
 }
 
-int solve_vector_tag(int N, int sender_rank) { return N + 1000 + sender_rank; }
+int solve_vector_tag(int sender_rank) {
+    return MPI_TAG_SOLVE_VECTOR_BASE + sender_rank;
+}
 
-int factorize_row_tag(int N, int sender_rank) { return N + 2000 + sender_rank; }
+int factorize_row_tag(int sender_rank) {
+    return MPI_TAG_FACTORIZE_ROW_BASE + sender_rank;
+}
 
 void build_packed_recv_groups(
     const std::unordered_map<int, int> &glbrow_to_rank,
@@ -953,7 +962,7 @@ RowSendRequests send_packed_rows_async(
             static_cast<int>(pending.buffers.back().size()),
             row_mpi_type,
             dest_rank,
-            factorize_row_tag(ilu->N, ilu->rank),
+            factorize_row_tag(ilu->rank),
             MPI_COMM_WORLD,
             &req
         );
@@ -982,7 +991,7 @@ RowRecvPending start_receive_packed_rows(
             static_cast<int>(buf.size()),
             row_mpi_type,
             src_rank,
-            factorize_row_tag(ilu->N, src_rank),
+            factorize_row_tag(src_rank),
             MPI_COMM_WORLD,
             &req
         );
@@ -1317,7 +1326,7 @@ auto share_vector(struct ILUFact *ilu, const std::vector<double> &vec, const Com
             static_cast<int>(buf.size()),
             MPI_DOUBLE,
             src_rank,
-            solve_vector_tag(ilu->N, src_rank),
+            solve_vector_tag(src_rank),
             MPI_COMM_WORLD,
             &req
         );
@@ -1336,7 +1345,7 @@ auto share_vector(struct ILUFact *ilu, const std::vector<double> &vec, const Com
             static_cast<int>(buf.size()),
             MPI_DOUBLE,
             dest_rank,
-            solve_vector_tag(ilu->N, ilu->rank),
+            solve_vector_tag(ilu->rank),
             MPI_COMM_WORLD,
             &req
         );
