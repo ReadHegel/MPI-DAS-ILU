@@ -301,7 +301,7 @@ int main(int argc, char* argv[])
     }
 
     test_vector(ilu, N, v1, start_time);
-    test_vector(ilu, N, v2, start_time);
+    //test_vector(ilu, N, v2, start_time);
 
     MPI_Barrier(MPI_COMM_WORLD);
     double end_time = MPI_Wtime();

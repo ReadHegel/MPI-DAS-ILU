@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --nodes=4
+#SBATCH --nodes=5
 #SBATCH --ntasks-per-node=24
 #SBATCH --account "g105-2692"   
 #SBATCH --time=00:07:00
@@ -8,7 +8,7 @@
 MATRIX=matrices/Hook_1498.mtx
 echo "p,time" > results.csv
 
-for p in 1 2 4 8 12 24 48 96
+for p in 1 2 4 8 12 24 48 96 120
 do
     echo "=== Uruchamianie dla p=$p ==="
     srun -n $p ./example_test $MATRIX | awk -v p=$p '{
