@@ -3,8 +3,8 @@
 #SBATCH --output=logs/correctness-%j.out
 #SBATCH --error=logs/correctness-%j.err
 #SBATCH --account=g105-2692
-#SBATCH --nodes=6
-#SBATCH --ntasks-per-node=24
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=5
 #SBATCH --time=00:15:00
 
 set -euo pipefail
